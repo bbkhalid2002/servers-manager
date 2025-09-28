@@ -754,7 +754,7 @@ class RemoteFileBrowserFrame(ttk.Frame):
                 item_type = values[1] if len(values) > 1 else None
                 is_file = item_type == 'File'
                 # indices: 0=Change Permissions,1=Change Owner/Group,2=sep,3=Download,4=Delete
-                self._context_menu.entryconfigure(3, state='normal' if is_file else 'disabled')  # Download
+                self._context_menu.entryconfigure(2, state='normal' if is_file else 'disabled')  # Download
                 self._context_menu.entryconfigure(4, state='normal' if is_file else 'disabled')  # Delete
             except Exception:
                 # Fall back to enabling everything
