@@ -20,6 +20,57 @@ except ImportError:
     messagebox.showerror("Dependency Error", "Error: paramiko library not found. Please install it by running: pip install paramiko")
     sys.exit(1)
 
+# ---------- UI helpers ----------
+def center_window(win: tk.Toplevel | tk.Tk, relative_to: Optional[tk.Misc] = None):
+    """Center a window relative to a parent widget or the screen.
+
+    - win: the Toplevel/Tk window to center
+    - relative_to: the widget to center relative to (defaults to win.master or screen)
+    """
+    try:
+        win.update_idletasks()
+        # Determine parent to center against
+        parent = relative_to
+        if parent is None:
+            try:
+                parent = win.master if getattr(win, 'master', None) else win.winfo_toplevel()
+            except Exception:
+                parent = None
+
+        # Target window size
+        w = win.winfo_width()
+        h = win.winfo_height()
+        if w <= 1 or h <= 1:
+            w = win.winfo_reqwidth()
+            h = win.winfo_reqheight()
+
+        if parent is not None:
+            try:
+                parent.update_idletasks()
+            except Exception:
+                pass
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            pw = parent.winfo_width() or parent.winfo_reqwidth()
+            ph = parent.winfo_height() or parent.winfo_reqheight()
+            x = px + max(0, (pw - w) // 2)
+            y = py + max(0, (ph - h) // 2)
+        else:
+            sw = win.winfo_screenwidth()
+            sh = win.winfo_screenheight()
+            x = max(0, (sw - w) // 2)
+            y = max(0, (sh - h) // 2)
+
+        # Clamp to screen bounds
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+        x = max(0, min(x, sw - w))
+        y = max(0, min(y, sh - h))
+        win.geometry(f"{w}x{h}+{x}+{y}")
+    except Exception:
+        # Best-effort; ignore centering failures
+        pass
+
 class CredentialManager:
     """Handles storage and retrieval of SSH server credentials in a plain JSON file."""
     
@@ -122,7 +173,7 @@ class ServerManagerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("SSH Server Manager")
-        self.root.geometry("700x500")
+        # Geometry is set in main() to center at 50% of screen
         
         self.credential_manager = CredentialManager()
         self.ssh_connection = SSHConnection()
@@ -421,8 +472,8 @@ class RemoteFileBrowserFrame(ttk.Frame):
         # Context menu (right-click)
         self.tree.bind("<Button-3>", self.on_right_click)
         self._context_menu = tk.Menu(self, tearoff=0)
-        self._context_menu.add_command(label="Change Permissions...", command=self.change_permissions_selected)
-        self._context_menu.add_command(label="Change Owner/Group...", command=self.change_owner_group_selected)
+        self._context_menu.add_command(label="Change Permissions", command=self.change_permissions_selected)
+        self._context_menu.add_command(label="Change Owner/Group", command=self.change_owner_group_selected)
         self._context_menu.add_separator()
         self._context_menu.add_command(label="Delete", command=self.delete_selected)
 
@@ -843,7 +894,8 @@ class RemoteFileBrowserFrame(ttk.Frame):
             self.status_var.set("Another transfer is in progress. Please wait...")
             return
 
-        local_path = filedialog.askopenfilename(title="Select file to upload")
+        # center native dialog by passing parent
+        local_path = filedialog.askopenfilename(title="Select file to upload", parent=self)
         if not local_path:
             return  # cancelled
 
@@ -929,7 +981,8 @@ class RemoteFileBrowserFrame(ttk.Frame):
         remote_path = posixpath.normpath(posixpath.join(self.current_path.get(), filename))
 
         # Ask for local save location
-        local_path = filedialog.asksaveasfilename(title="Save As", initialfile=filename)
+        # center native dialog by passing parent
+        local_path = filedialog.asksaveasfilename(title="Save As", initialfile=filename, parent=self)
         if not local_path:
             return
 
@@ -1096,14 +1149,16 @@ class ServerDialog:
         
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(title)
-        self.dialog.geometry("400x280")
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
         self.dialog.grab_set()
         
-        self.dialog.geometry(f"+{parent.winfo_rootx()+50}+{parent.winfo_rooty()+50}")
-        
         self.setup_dialog_ui(server_data, server_name)
+        # Center after layout relative to parent
+        try:
+            center_window(self.dialog, parent)
+        except Exception:
+            pass
         
         self.dialog.wait_window()
     
@@ -1208,7 +1263,10 @@ class PermissionsDialog:
         btns.grid(row=3, column=0, columnspan=4, pady=(10,0))
         ttk.Button(btns, text='OK', command=self.ok).pack(side=tk.LEFT, padx=5)
         ttk.Button(btns, text='Cancel', command=self.cancel).pack(side=tk.LEFT, padx=5)
-
+        try:
+            center_window(self.dialog, parent)
+        except Exception:
+            pass
         self.dialog.wait_window()
 
     def ok(self):
@@ -1263,7 +1321,10 @@ class OwnerGroupDialog:
         btns.grid(row=2, column=0, columnspan=2, pady=(10,0))
         ttk.Button(btns, text='OK', command=self.ok).pack(side=tk.LEFT, padx=5)
         ttk.Button(btns, text='Cancel', command=self.cancel).pack(side=tk.LEFT, padx=5)
-
+        try:
+            center_window(self.dialog, parent)
+        except Exception:
+            pass
         self.dialog.wait_window()
 
     def ok(self):
@@ -1276,6 +1337,18 @@ class OwnerGroupDialog:
 def main():
     """Main application entry point."""
     root = tk.Tk()
+    # Center main window at 50% of screen size
+    try:
+        root.update_idletasks()
+        sw = root.winfo_screenwidth()
+        sh = root.winfo_screenheight()
+        w = max(700, int(sw * 0.5))
+        h = max(500, int(sh * 0.5))
+        x = (sw - w) // 2
+        y = (sh - h) // 2
+        root.geometry(f"{w}x{h}+{x}+{y}")
+    except Exception:
+        root.geometry("900x600")
     
     def on_closing():
         if messagebox.askokcancel("Quit", "Do you want to quit?"):
