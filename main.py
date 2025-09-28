@@ -296,7 +296,8 @@ class ServerManagerGUI:
         # Server tab - manage favorite services
         server_tab = ttk.Frame(notebook, padding=(10, 12, 10, 10))
         server_tab.columnconfigure(0, weight=1)
-        server_tab.rowconfigure(1, weight=1)
+        server_tab.rowconfigure(1, weight=1)  # services tree
+        server_tab.rowconfigure(3, weight=1)  # logs area
 
         server_toolbar = ttk.Frame(server_tab)
         server_toolbar.grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
@@ -334,6 +335,18 @@ class ServerManagerGUI:
         self.services_tree.grid(row=0, column=0, sticky='nsew')
         svc_scroll.grid(row=0, column=1, sticky='ns')
         self.services_tree.bind('<<TreeviewSelect>>', lambda e: self._update_service_actions_state())
+        # Double-click a service to show its logs below
+        def _on_services_double_click(event):
+            row_id = self.services_tree.identify_row(event.y)
+            if not row_id:
+                return
+            self.services_tree.selection_set(row_id)
+            self.services_tree.focus(row_id)
+            vals = self.services_tree.item(row_id).get('values') or []
+            service = vals[0] if vals else ''
+            if service:
+                self._fetch_service_logs_async(service)
+        self.services_tree.bind('<Double-1>', _on_services_double_click)
         # Context menu for services (Start/Stop/Status)
         self._services_menu = tk.Menu(server_tab, tearoff=0)
         self._services_menu.add_command(label='Start', command=lambda: self._svc_action('start'))
@@ -367,6 +380,18 @@ class ServerManagerGUI:
         self.svc_status_btn = ttk.Button(actions, text='Status', command=lambda: self._svc_action('status'), state='disabled')
         for b in (self.svc_start_btn, self.svc_stop_btn, self.svc_status_btn):
             b.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Logs area below services
+        logs_frame = ttk.Frame(server_tab)
+        logs_frame.grid(row=3, column=0, sticky=(tk.N, tk.S, tk.E, tk.W), pady=(8, 0))
+        logs_frame.columnconfigure(0, weight=1)
+        logs_frame.rowconfigure(1, weight=1)
+        ttk.Label(logs_frame, text="Logs").grid(row=0, column=0, sticky=tk.W, pady=(0, 4))
+        self.svc_logs_text = tk.Text(logs_frame, height=10, wrap='word', state='disabled')
+        logs_scroll = ttk.Scrollbar(logs_frame, orient='vertical', command=self.svc_logs_text.yview)
+        self.svc_logs_text.configure(yscrollcommand=logs_scroll.set)
+        self.svc_logs_text.grid(row=1, column=0, sticky='nsew')
+        logs_scroll.grid(row=1, column=1, sticky='ns')
 
         notebook.add(file_mgmt_tab, text="File Management")
         notebook.add(server_tab, text="Services")
@@ -702,6 +727,8 @@ class ServerManagerGUI:
                 return
             # give systemd a moment and refresh
             self.root.after(500, self._refresh_services_status_async)
+            # also fetch recent logs for the service
+            self.root.after(600, lambda s=service: self._fetch_service_logs_async(s))
         elif action == 'status':
             # status: show popup
             self._run_remote_cmd(cmd, title=f"systemctl {action} {service}")
@@ -777,6 +804,38 @@ class ServerManagerGUI:
                     if selected_iid:
                         self.services_tree.selection_set(selected_iid)
                         self.services_tree.focus(selected_iid)
+                except Exception:
+                    pass
+            try:
+                self.root.after(0, update_ui)
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _fetch_service_logs_async(self, service: str):
+        if not self.ssh_connection.is_connected() or not service:
+            return
+        def worker():
+            try:
+                # Fetch last 100 lines of logs for the unit, no pager, show time
+                cmd = f"journalctl -u {service} -n 100 --no-pager --output=short-iso"
+                stdin, stdout, stderr = self.ssh_connection.client.exec_command(cmd)
+                out = stdout.read().decode('utf-8', errors='replace')
+                err = stderr.read().decode('utf-8', errors='replace')
+                text = out if out.strip() else err
+            except Exception as e:
+                text = f"Failed to fetch logs: {e}"
+            def update_ui():
+                try:
+                    self.svc_logs_text.config(state='normal')
+                    self.svc_logs_text.delete('1.0', 'end')
+                    self.svc_logs_text.insert('1.0', text)
+                    # Scroll to bottom to show latest logs
+                    try:
+                        self.svc_logs_text.see('end')
+                    except Exception:
+                        pass
+                    self.svc_logs_text.config(state='disabled')
                 except Exception:
                     pass
             try:
