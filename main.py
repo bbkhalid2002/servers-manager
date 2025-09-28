@@ -11,6 +11,8 @@ import sys
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional
+import posixpath
+import stat
 
 try:
     import paramiko
@@ -124,6 +126,7 @@ class ServerManagerGUI:
         
         self.credential_manager = CredentialManager()
         self.ssh_connection = SSHConnection()
+        self.connected_server_name: Optional[str] = None
         
         self.setup_ui()
         self.refresh_server_list()
@@ -153,6 +156,8 @@ class ServerManagerGUI:
         self.server_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
         
+        self.server_listbox.bind("<Double-1>", self.browse_server_sftp)
+        
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=2, column=0, columnspan=2, pady=(10, 10), sticky=tk.W)
         
@@ -167,6 +172,9 @@ class ServerManagerGUI:
         self.disconnect_button = ttk.Button(button_frame, text="Disconnect", command=self.disconnect_from_server)
         self.disconnect_button.pack(side=tk.LEFT, padx=5)
         
+        self.browse_button = ttk.Button(button_frame, text="Browse Files", command=self.browse_server_sftp)
+        self.browse_button.pack(side=tk.LEFT, padx=5)
+        
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
@@ -180,6 +188,7 @@ class ServerManagerGUI:
         self.delete_button.config(state=state)
         self.connect_button.config(state=state)
         self.disconnect_button.config(state=state)
+        self.browse_button.config(state=state)
         self.server_listbox.config(state=state)
 
     def refresh_server_list(self):
@@ -233,6 +242,35 @@ class ServerManagerGUI:
             self.refresh_server_list()
             self.status_var.set(f"Deleted server: {server_name}")
     
+    def browse_server_sftp(self, event=None):
+        """Open SFTP browser for the selected server."""
+        if not self.ssh_connection.is_connected():
+            messagebox.showwarning("Not Connected", "Please connect to a server first to browse its files.")
+            return
+
+        selection = self.server_listbox.curselection()
+        index = None
+        if selection:
+            index = selection[0]
+        elif event is not None and hasattr(event, 'widget') and isinstance(event.widget, tk.Listbox):
+            # On double-click, the selection may not yet be updated; derive from mouse position
+            idx = event.widget.nearest(event.y)
+            if idx is not None and idx >= 0:
+                index = idx
+
+        if index is None:
+            messagebox.showwarning("No Server Selected", "Please select a server from the list.")
+            return
+            
+        server_name = self.server_listbox.get(index)
+        
+        # Check if the selected server is the one we are connected to
+        if server_name != self.connected_server_name:
+             messagebox.showwarning("Wrong Server", "You are connected to a different server. Please select the correct one.")
+             return
+
+        SFTPBrowser(self.root, self.ssh_connection.client, server_name)
+
     def connect_to_server(self):
         """Connect to selected server."""
         if self.ssh_connection.is_connected():
@@ -266,18 +304,171 @@ class ServerManagerGUI:
         self.set_controls_enabled(True)
         self.status_var.set(message)
         if success:
+            self.connected_server_name = server_name
             messagebox.showinfo("Connection Successful", message)
         else:
+            self.connected_server_name = None
             messagebox.showerror("Connection Failed", message)
     
     def disconnect_from_server(self):
         """Disconnect from current server."""
         if self.ssh_connection.is_connected():
             self.ssh_connection.disconnect()
+            self.connected_server_name = None
             self.status_var.set("Disconnected")
             messagebox.showinfo("Disconnected", "Disconnected from server.")
         else:
             messagebox.showinfo("Not Connected", "No active connection to disconnect from.")
+
+class SFTPBrowser(tk.Toplevel):
+    """A Toplevel window for browsing a remote server's filesystem using SFTP."""
+
+    def __init__(self, parent, ssh_client: paramiko.SSHClient, server_name: str):
+        super().__init__(parent)
+        self.title(f"File Browser - {server_name}")
+        self.geometry("600x700")
+        self.transient(parent)
+        self.grab_set()
+
+        self.ssh_client = ssh_client
+        self.sftp_client = None
+        self.current_path = tk.StringVar()
+
+        self.setup_ui()
+        self.open_sftp_session()
+
+    def setup_ui(self):
+        """Setup the UI components for the file browser."""
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(1, weight=1)
+
+        # Path display and Up button
+        path_frame = ttk.Frame(main_frame)
+        path_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        path_frame.columnconfigure(1, weight=1)
+
+        up_button = ttk.Button(path_frame, text="..", command=self.go_up_directory, width=4)
+        up_button.grid(row=0, column=0, sticky=tk.W)
+
+        path_label = ttk.Entry(path_frame, textvariable=self.current_path, state='readonly')
+        path_label.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
+
+        # Treeview for file listing
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.grid(row=1, column=0, sticky="nsew")
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+
+        self.tree = ttk.Treeview(tree_frame, columns=("size", "type"), show="tree headings")
+        self.tree.heading("size", text="Size")
+        self.tree.heading("type", text="Type")
+        self.tree.column("size", width=100, anchor='e')
+        self.tree.column("type", width=100, anchor='w')
+
+        # Display filename in the tree column (#0)
+        self.tree.column("#0", width=350, anchor='w')
+        self.tree.heading("#0", text="Name")
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        self.tree.bind("<Double-1>", self.on_item_double_click)
+
+        # Status bar
+        self.status_var = tk.StringVar(value="Connecting...")
+        status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
+        status_bar.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+
+        self.protocol("WM_DELETE_WINDOW", self.close_sftp_session)
+
+    def open_sftp_session(self):
+        """Opens an SFTP session and lists the initial directory."""
+        try:
+            self.sftp_client = self.ssh_client.open_sftp()
+            initial_path = self.sftp_client.normalize('.')
+            initial_path = posixpath.normpath(initial_path)
+            self.list_directory(initial_path)
+        except Exception as e:
+            self.status_var.set(f"Error: {e}")
+            messagebox.showerror("SFTP Error", f"Could not open SFTP session: {e}", parent=self)
+            self.destroy()
+
+    def list_directory(self, path: str):
+        """Lists the contents of a remote directory in the treeview."""
+        path = posixpath.normpath(path) if path else '/'
+        self.current_path.set(path)
+        self.tree.delete(*self.tree.get_children())
+
+        try:
+            items = self.sftp_client.listdir_attr(path)
+            self.status_var.set(f"Listing contents of {path}")
+
+            # Separate directories and files for sorting
+            dirs = []
+            files = []
+            for attr in items:
+                is_dir = stat.S_ISDIR(attr.st_mode)
+                item_type = "Directory" if is_dir else "File"
+                item = (attr.filename, attr.st_size, item_type, is_dir)
+                if is_dir:
+                    dirs.append(item)
+                else:
+                    files.append(item)
+
+            # Sort alphabetically
+            dirs.sort(key=lambda x: x[0].lower())
+            files.sort(key=lambda x: x[0].lower())
+
+            for name, size, item_type, is_dir in dirs + files:
+                tags = ('directory',) if is_dir else ()
+                self.tree.insert("", "end", text=name, values=(size, item_type), tags=tags)
+
+            self.tree.tag_configure('directory', foreground='blue', font=('TkDefaultFont', 9, 'bold'))
+
+        except Exception as e:
+            self.status_var.set(f"Error listing directory: {e}")
+            messagebox.showerror("Error", f"Could not list directory '{path}':\n{e}", parent=self)
+
+    def on_item_double_click(self, event):
+        """Handle double-click on a treeview item."""
+        item_id = self.tree.focus()
+        if not item_id:
+            return
+
+        item = self.tree.item(item_id)
+        values = item.get('values') or []
+        item_type = values[1] if len(values) > 1 else None
+
+        if item_type == "Directory":
+            dir_name = item['text']
+            new_path = posixpath.normpath(posixpath.join(self.current_path.get(), dir_name))
+            self.list_directory(new_path)
+
+    def go_up_directory(self):
+        """Navigate to the parent directory."""
+        current = self.current_path.get() or '/'
+        norm_current = posixpath.normpath(current)
+        if norm_current == '/':
+            self.list_directory('/')
+            return
+        parent_path = posixpath.dirname(norm_current)
+        if not parent_path:
+            parent_path = '/'
+        self.list_directory(parent_path)
+
+    def close_sftp_session(self):
+        """Cleanly close the SFTP session and the window."""
+        if self.sftp_client:
+            try:
+                self.sftp_client.close()
+            except Exception:
+                pass
+        self.destroy()
 
 class ServerDialog:
     """Dialog for adding/editing server information."""
