@@ -1,0 +1,5 @@
+# SSH Server Manager Dependencies
+paramiko>=2.8.0
+
+# Optional: For building executable
+pyinstaller>=4.8

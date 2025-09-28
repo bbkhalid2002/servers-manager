@@ -1,0 +1,8 @@
+{
+    "Node 1": {
+        "host": "172.20.71.42",
+        "username": "khaled",
+        "password": "123456789",
+        "port": 22
+    }
+}
