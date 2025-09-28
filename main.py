@@ -5,7 +5,7 @@ A cross-platform GUI application for managing SSH server connections.
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import json
 import sys
 import threading
@@ -142,43 +142,74 @@ class ServerManagerGUI:
         main_frame.rowconfigure(1, weight=1)
         
         title_label = ttk.Label(main_frame, text="SSH Server Manager", font=("Arial", 16, "bold"))
-        title_label.grid(row=0, column=0, columnspan=2, pady=(0, 20))
-        
-        list_frame = ttk.LabelFrame(main_frame, text="Saved Servers", padding="5")
-        list_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
-        list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
-        
-        self.server_listbox = tk.Listbox(list_frame)
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.server_listbox.yview)
+        title_label.grid(row=0, column=0, sticky=(tk.W), pady=(0, 10))
+
+        # Paned window split: left servers list, right file browser
+        paned = ttk.Panedwindow(main_frame, orient=tk.HORIZONTAL)
+        paned.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+
+        # Left panel: servers
+        left_panel = ttk.Frame(paned, padding="5")
+        left_panel.columnconfigure(0, weight=1)
+        left_panel.rowconfigure(1, weight=1)
+
+        ttk.Label(left_panel, text="Servers", font=("Arial", 11, "bold")).grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+
+        servers_frame = ttk.Frame(left_panel)
+        servers_frame.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+        servers_frame.columnconfigure(0, weight=1)
+        servers_frame.rowconfigure(0, weight=1)
+
+        self.server_listbox = tk.Listbox(servers_frame)
+        scrollbar = ttk.Scrollbar(servers_frame, orient="vertical", command=self.server_listbox.yview)
         self.server_listbox.config(yscrollcommand=scrollbar.set)
-        
         self.server_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+
+        # Double-click action on server item
+        self.server_listbox.bind("<Double-1>", self.on_server_double_click)
+
+        # Buttons panel
+        button_frame = ttk.Frame(left_panel)
+        button_frame.grid(row=2, column=0, pady=(8, 0), sticky=tk.W)
         
-        self.server_listbox.bind("<Double-1>", self.browse_server_sftp)
-        
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=2, column=0, columnspan=2, pady=(10, 10), sticky=tk.W)
-        
-        self.add_button = ttk.Button(button_frame, text="Add Server", command=self.add_server_dialog)
+        self.add_button = ttk.Button(button_frame, text="Add", command=self.add_server_dialog)
         self.add_button.pack(side=tk.LEFT, padx=(0, 5))
-        self.edit_button = ttk.Button(button_frame, text="Edit Server", command=self.edit_server_dialog)
+        self.edit_button = ttk.Button(button_frame, text="Edit", command=self.edit_server_dialog)
         self.edit_button.pack(side=tk.LEFT, padx=5)
-        self.delete_button = ttk.Button(button_frame, text="Delete Server", command=self.delete_server)
+        self.delete_button = ttk.Button(button_frame, text="Delete", command=self.delete_server)
         self.delete_button.pack(side=tk.LEFT, padx=5)
         self.connect_button = ttk.Button(button_frame, text="Connect", command=self.connect_to_server)
         self.connect_button.pack(side=tk.LEFT, padx=5)
         self.disconnect_button = ttk.Button(button_frame, text="Disconnect", command=self.disconnect_from_server)
         self.disconnect_button.pack(side=tk.LEFT, padx=5)
-        
-        self.browse_button = ttk.Button(button_frame, text="Browse Files", command=self.browse_server_sftp)
-        self.browse_button.pack(side=tk.LEFT, padx=5)
-        
+
+        # Right panel: embedded remote file browser
+        right_panel = ttk.Frame(paned, padding="5")
+        right_panel.columnconfigure(0, weight=1)
+        right_panel.rowconfigure(2, weight=1)
+
+        ttk.Label(right_panel, text="Remote Files", font=("Arial", 11, "bold")).grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+
+        # Toolbar under the "Remote Files" label
+        toolbar = ttk.Frame(right_panel)
+        toolbar.grid(row=1, column=0, sticky=tk.W, pady=(0, 5))
+        self.upload_button = ttk.Button(toolbar, text="Upload", command=self.on_upload_click, state='disabled')
+        self.upload_button.pack(side=tk.LEFT)
+        self.download_button = ttk.Button(toolbar, text="Download", command=self.on_download_click, state='disabled')
+        self.download_button.pack(side=tk.LEFT, padx=(5, 0))
+
+        self.file_browser = RemoteFileBrowserFrame(right_panel)
+        self.file_browser.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+
+        paned.add(left_panel, weight=1)
+        paned.add(right_panel, weight=2)
+
+        # Status bar at bottom
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E))
+        status_bar.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(8, 0))
 
     def set_controls_enabled(self, enabled: bool):
         """Enable or disable interactive controls."""
@@ -188,8 +219,8 @@ class ServerManagerGUI:
         self.delete_button.config(state=state)
         self.connect_button.config(state=state)
         self.disconnect_button.config(state=state)
-        self.browse_button.config(state=state)
         self.server_listbox.config(state=state)
+        # Upload button follows connection state elsewhere; don't toggle here
 
     def refresh_server_list(self):
         """Refresh the server list display."""
@@ -242,48 +273,41 @@ class ServerManagerGUI:
             self.refresh_server_list()
             self.status_var.set(f"Deleted server: {server_name}")
     
-    def browse_server_sftp(self, event=None):
-        """Open SFTP browser for the selected server."""
-        if not self.ssh_connection.is_connected():
-            messagebox.showwarning("Not Connected", "Please connect to a server first to browse its files.")
+    def on_server_double_click(self, event):
+        # Determine clicked index reliably
+        idx = event.widget.nearest(event.y)
+        if idx is None or idx < 0:
             return
+        self.server_listbox.selection_clear(0, tk.END)
+        self.server_listbox.selection_set(idx)
+        self.server_listbox.activate(idx)
 
-        selection = self.server_listbox.curselection()
-        index = None
-        if selection:
-            index = selection[0]
-        elif event is not None and hasattr(event, 'widget') and isinstance(event.widget, tk.Listbox):
-            # On double-click, the selection may not yet be updated; derive from mouse position
-            idx = event.widget.nearest(event.y)
-            if idx is not None and idx >= 0:
-                index = idx
-
-        if index is None:
-            messagebox.showwarning("No Server Selected", "Please select a server from the list.")
-            return
-            
-        server_name = self.server_listbox.get(index)
-        
-        # Check if the selected server is the one we are connected to
-        if server_name != self.connected_server_name:
-             messagebox.showwarning("Wrong Server", "You are connected to a different server. Please select the correct one.")
-             return
-
-        SFTPBrowser(self.root, self.ssh_connection.client, server_name)
+        server_name = self.server_listbox.get(idx)
+        if not self.ssh_connection.is_connected() or self.connected_server_name != server_name:
+            self.connect_to_server_by_name(server_name)
+        else:
+            # Already connected to this server, refresh file browser
+            self.file_browser.attach_client(self.ssh_connection.client)
 
     def connect_to_server(self):
-        """Connect to selected server."""
-        if self.ssh_connection.is_connected():
-            messagebox.showwarning("Already Connected", "Please disconnect before starting a new connection.")
-            return
-
+        """Connect to the currently selected server from the listbox."""
         selection = self.server_listbox.curselection()
         if not selection:
             messagebox.showwarning("Warning", "Please select a server to connect to")
             return
-        
         server_name = self.server_listbox.get(selection[0])
+        self.connect_to_server_by_name(server_name)
+
+    def connect_to_server_by_name(self, server_name: str):
+        """Connect to the server by its name."""
+        if self.ssh_connection.is_connected():
+            messagebox.showwarning("Already Connected", "Please disconnect before starting a new connection.")
+            return
+        
         server_data = self.credential_manager.get_server(server_name)
+        if not server_data:
+            messagebox.showerror("Error", f"Server data not found for '{server_name}'")
+            return
         
         self.status_var.set(f"Connecting to {server_name}...")
         self.set_controls_enabled(False)
@@ -305,59 +329,71 @@ class ServerManagerGUI:
         self.status_var.set(message)
         if success:
             self.connected_server_name = server_name
-            messagebox.showinfo("Connection Successful", message)
+            # Attach/reload the file browser on successful connection
+            self.file_browser.attach_client(self.ssh_connection.client)
+            # Enable upload when connected
+            self.upload_button.config(state='normal')
+            self.download_button.config(state='normal')
         else:
             self.connected_server_name = None
+            self.file_browser.attach_client(None)
+            self.upload_button.config(state='disabled')
+            self.download_button.config(state='disabled')
             messagebox.showerror("Connection Failed", message)
-    
+
     def disconnect_from_server(self):
         """Disconnect from current server."""
         if self.ssh_connection.is_connected():
             self.ssh_connection.disconnect()
             self.connected_server_name = None
+            self.file_browser.attach_client(None)
+            self.upload_button.config(state='disabled')
+            self.download_button.config(state='disabled')
             self.status_var.set("Disconnected")
             messagebox.showinfo("Disconnected", "Disconnected from server.")
         else:
             messagebox.showinfo("Not Connected", "No active connection to disconnect from.")
 
-class SFTPBrowser(tk.Toplevel):
-    """A Toplevel window for browsing a remote server's filesystem using SFTP."""
+    def on_upload_click(self):
+        """Handle click on Upload button to upload a file to current/selected remote directory."""
+        self.file_browser.prompt_and_upload()
 
-    def __init__(self, parent, ssh_client: paramiko.SSHClient, server_name: str):
+    def on_download_click(self):
+        """Handle click on Download button to download selected file from remote to local."""
+        self.file_browser.prompt_and_download()
+
+class RemoteFileBrowserFrame(ttk.Frame):
+    """Embeddable SFTP browser frame for the main window right pane."""
+
+    def __init__(self, parent):
         super().__init__(parent)
-        self.title(f"File Browser - {server_name}")
-        self.geometry("600x700")
-        self.transient(parent)
-        self.grab_set()
-
-        self.ssh_client = ssh_client
+        self.ssh_client: Optional[paramiko.SSHClient] = None
         self.sftp_client = None
-        self.current_path = tk.StringVar()
+        self.current_path = tk.StringVar(value="Not connected")
+        # Editor state
+        self.open_file_path: Optional[str] = None
+        self._editor_dirty: bool = False
 
-        self.setup_ui()
-        self.open_sftp_session()
+        self._build_ui()
 
-    def setup_ui(self):
-        """Setup the UI components for the file browser."""
-        main_frame = ttk.Frame(self, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(1, weight=1)
+    def _build_ui(self):
+        self.columnconfigure(0, weight=1)
+        # Give both the tree (row 1) and editor (row 3) flexible space
+        self.rowconfigure(1, weight=1)
+        self.rowconfigure(3, weight=1)
 
-        # Path display and Up button
-        path_frame = ttk.Frame(main_frame)
-        path_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        path_frame = ttk.Frame(self)
+        path_frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
         path_frame.columnconfigure(1, weight=1)
 
-        up_button = ttk.Button(path_frame, text="..", command=self.go_up_directory, width=4)
-        up_button.grid(row=0, column=0, sticky=tk.W)
+        self.up_button = ttk.Button(path_frame, text="..", command=self.go_up_directory, width=4)
+        self.up_button.grid(row=0, column=0, sticky=tk.W)
 
-        path_label = ttk.Entry(path_frame, textvariable=self.current_path, state='readonly')
-        path_label.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.path_entry = ttk.Entry(path_frame, textvariable=self.current_path, state='readonly')
+        self.path_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
 
-        # Treeview for file listing
-        tree_frame = ttk.Frame(main_frame)
-        tree_frame.grid(row=1, column=0, sticky="nsew")
+        tree_frame = ttk.Frame(self)
+        tree_frame.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.E, tk.W), pady=(5, 0))
         tree_frame.columnconfigure(0, weight=1)
         tree_frame.rowconfigure(0, weight=1)
 
@@ -366,91 +402,136 @@ class SFTPBrowser(tk.Toplevel):
         self.tree.heading("type", text="Type")
         self.tree.column("size", width=100, anchor='e')
         self.tree.column("type", width=100, anchor='w')
-
-        # Display filename in the tree column (#0)
         self.tree.column("#0", width=350, anchor='w')
         self.tree.heading("#0", text="Name")
 
         scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
-
         self.tree.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
 
         self.tree.bind("<Double-1>", self.on_item_double_click)
 
-        # Status bar
-        self.status_var = tk.StringVar(value="Connecting...")
-        status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+        # Editor toolbar (Save + Search)
+        editor_toolbar = ttk.Frame(self)
+        editor_toolbar.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+        editor_toolbar.columnconfigure(4, weight=1)
 
-        self.protocol("WM_DELETE_WINDOW", self.close_sftp_session)
+        ttk.Label(editor_toolbar, text="Editor:").grid(row=0, column=0, padx=(0, 6))
+        self.save_button = ttk.Button(editor_toolbar, text="Save", command=self.save_open_file, state='disabled')
+        self.save_button.grid(row=0, column=1)
 
-    def open_sftp_session(self):
-        """Opens an SFTP session and lists the initial directory."""
+        ttk.Label(editor_toolbar, text="Search:").grid(row=0, column=2, padx=(10, 6))
+        self.search_var = tk.StringVar()
+        self.search_entry = ttk.Entry(editor_toolbar, textvariable=self.search_var, state='disabled')
+        self.search_entry.grid(row=0, column=3, sticky=(tk.W, tk.E))
+        self.find_next_button = ttk.Button(editor_toolbar, text="Find Next", command=self.find_next, state='disabled')
+        self.find_next_button.grid(row=0, column=4, padx=(6, 0), sticky=tk.W)
+
+        # Editor text area
+        editor_frame = ttk.Frame(self)
+        editor_frame.grid(row=3, column=0, sticky=(tk.N, tk.S, tk.E, tk.W), pady=(5, 0))
+        editor_frame.columnconfigure(0, weight=1)
+        editor_frame.rowconfigure(0, weight=1)
+
+        self.editor_text = tk.Text(editor_frame, wrap='none', undo=True)
+        self.editor_vscroll = ttk.Scrollbar(editor_frame, orient='vertical', command=self.editor_text.yview)
+        self.editor_text.configure(yscrollcommand=self.editor_vscroll.set)
+        self.editor_text.grid(row=0, column=0, sticky='nsew')
+        self.editor_vscroll.grid(row=0, column=1, sticky='ns')
+
+        # Configure tags and bindings for editor
+        self.editor_text.tag_configure('search_highlight', background='yellow')
+        self.editor_text.bind('<<Modified>>', self._on_text_modified)
+
+        self.status_var = tk.StringVar(value="Not connected")
+        status_bar = ttk.Label(self, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
+        status_bar.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+
+        self.set_enabled(False)
+
+    def set_enabled(self, enabled: bool):
+        state = 'normal' if enabled else 'disabled'
+        self.up_button.config(state=state)
+        self.tree.config(selectmode='browse' if enabled else 'none')
+        self.enabled = enabled
+        # Editor controls follow enabled state but remain disabled until a file is open
+        if not enabled:
+            self._set_editor_enabled(False)
+
+    def attach_client(self, ssh_client: Optional[paramiko.SSHClient]):
+        """Attach or detach an SSH client; refresh the view accordingly."""
+        # Close previous SFTP if any
+        if self.sftp_client:
+            try:
+                self.sftp_client.close()
+            except Exception:
+                pass
+            self.sftp_client = None
+
+        self.ssh_client = ssh_client
+
+        if self.ssh_client is None:
+            self.current_path.set("Not connected")
+            self.status_var.set("Not connected")
+            self.tree.delete(*self.tree.get_children())
+            self.set_enabled(False)
+            self._transfer_in_progress = False
+            return
+
         try:
             self.sftp_client = self.ssh_client.open_sftp()
             initial_path = self.sftp_client.normalize('.')
             initial_path = posixpath.normpath(initial_path)
+            self.set_enabled(True)
             self.list_directory(initial_path)
         except Exception as e:
-            self.status_var.set(f"Error: {e}")
-            messagebox.showerror("SFTP Error", f"Could not open SFTP session: {e}", parent=self)
-            self.destroy()
+            self.status_var.set(f"SFTP error: {e}")
+            messagebox.showerror("SFTP Error", f"Could not open SFTP session: {e}")
+            self.set_enabled(False)
 
     def list_directory(self, path: str):
-        """Lists the contents of a remote directory in the treeview."""
+        if not self.sftp_client:
+            return
         path = posixpath.normpath(path) if path else '/'
         self.current_path.set(path)
         self.tree.delete(*self.tree.get_children())
-
         try:
             items = self.sftp_client.listdir_attr(path)
-            self.status_var.set(f"Listing contents of {path}")
-
-            # Separate directories and files for sorting
-            dirs = []
-            files = []
+            self.status_var.set(f"Listing {path}")
+            dirs, files = [], []
             for attr in items:
                 is_dir = stat.S_ISDIR(attr.st_mode)
-                item_type = "Directory" if is_dir else "File"
-                item = (attr.filename, attr.st_size, item_type, is_dir)
-                if is_dir:
-                    dirs.append(item)
-                else:
-                    files.append(item)
-
-            # Sort alphabetically
+                entry = (attr.filename, attr.st_size, is_dir)
+                (dirs if is_dir else files).append(entry)
             dirs.sort(key=lambda x: x[0].lower())
             files.sort(key=lambda x: x[0].lower())
-
-            for name, size, item_type, is_dir in dirs + files:
+            for name, size, is_dir in dirs + files:
+                values = (size, "Directory" if is_dir else "File")
                 tags = ('directory',) if is_dir else ()
-                self.tree.insert("", "end", text=name, values=(size, item_type), tags=tags)
-
+                self.tree.insert("", "end", text=name, values=values, tags=tags)
             self.tree.tag_configure('directory', foreground='blue', font=('TkDefaultFont', 9, 'bold'))
-
         except Exception as e:
-            self.status_var.set(f"Error listing directory: {e}")
-            messagebox.showerror("Error", f"Could not list directory '{path}':\n{e}", parent=self)
+            self.status_var.set(f"Error: {e}")
+            messagebox.showerror("Error", f"Could not list directory '{path}':\n{e}")
 
     def on_item_double_click(self, event):
-        """Handle double-click on a treeview item."""
         item_id = self.tree.focus()
         if not item_id:
             return
-
         item = self.tree.item(item_id)
         values = item.get('values') or []
         item_type = values[1] if len(values) > 1 else None
-
         if item_type == "Directory":
             dir_name = item['text']
             new_path = posixpath.normpath(posixpath.join(self.current_path.get(), dir_name))
             self.list_directory(new_path)
+        elif item_type == "File":
+            filename = item['text']
+            remote_path = posixpath.normpath(posixpath.join(self.current_path.get(), filename))
+            self.open_remote_file(remote_path)
 
     def go_up_directory(self):
-        """Navigate to the parent directory."""
         current = self.current_path.get() or '/'
         norm_current = posixpath.normpath(current)
         if norm_current == '/':
@@ -461,14 +542,275 @@ class SFTPBrowser(tk.Toplevel):
             parent_path = '/'
         self.list_directory(parent_path)
 
-    def close_sftp_session(self):
-        """Cleanly close the SFTP session and the window."""
-        if self.sftp_client:
+    def _get_active_or_selected_dir(self) -> Optional[str]:
+        """Return the target remote directory: selected directory if any, else current path."""
+        if not self.enabled or not self.sftp_client:
+            return None
+        base = self.current_path.get()
+        sel = self.tree.selection()
+        if sel:
+            item = self.tree.item(sel[0])
+            values = item.get('values') or []
+            item_type = values[1] if len(values) > 1 else None
+            if item_type == 'Directory':
+                dir_name = item['text']
+                return posixpath.normpath(posixpath.join(base, dir_name))
+        return base
+
+    def prompt_and_upload(self):
+        """Open a file dialog and upload the chosen file to the active/selected remote directory."""
+        if not self.sftp_client:
+            messagebox.showwarning("Not Connected", "Please connect to a server first.")
+            return
+
+        if getattr(self, '_transfer_in_progress', False):
+            self.status_var.set("Another transfer is in progress. Please wait...")
+            return
+
+        local_path = filedialog.askopenfilename(title="Select file to upload")
+        if not local_path:
+            return  # cancelled
+
+        remote_dir = self._get_active_or_selected_dir()
+        if not remote_dir:
+            messagebox.showwarning("No Target", "Unable to determine remote directory.")
+            return
+
+        filename = Path(local_path).name
+        remote_path = posixpath.join(remote_dir, filename)
+
+        # Existence and overwrite checks
+        def _stat(path):
             try:
-                self.sftp_client.close()
+                return self.sftp_client.stat(path)
             except Exception:
-                pass
-        self.destroy()
+                return None
+
+        existing = _stat(remote_path)
+        if existing is not None:
+            # If a directory exists with same name, block
+            if stat.S_ISDIR(existing.st_mode):
+                messagebox.showerror("Upload Error", f"A directory named '{filename}' already exists at the destination.")
+                return
+            # Confirm overwrite
+            if not messagebox.askyesno("Overwrite?", f"'{filename}' already exists. Overwrite?"):
+                return
+
+        # Run upload in background to keep UI responsive
+        self._transfer_in_progress = True
+        self.status_var.set(f"Uploading {filename} to {remote_dir}...")
+        self.set_enabled(False)
+
+        def _do_upload():
+            err = None
+            try:
+                self.sftp_client.put(local_path, remote_path)
+            except Exception as e:
+                err = e
+            finally:
+                # Back to UI thread
+                try:
+                    self.after(0, lambda: self._after_upload(remote_dir, filename, err))
+                except Exception:
+                    pass
+
+        threading.Thread(target=_do_upload, daemon=True).start()
+
+    def _after_upload(self, remote_dir: str, filename: str, err: Optional[Exception]):
+        self._transfer_in_progress = False
+        self.set_enabled(True)
+        if err is None:
+            self.status_var.set(f"Uploaded {filename} to {remote_dir}")
+            # Refresh listing
+            self.list_directory(remote_dir)
+        else:
+            self.status_var.set(f"Upload failed: {err}")
+            messagebox.showerror("Upload Failed", f"Could not upload file:\n{err}")
+
+    def prompt_and_download(self):
+        """Download the selected file from the remote browser to a chosen local path."""
+        if not self.sftp_client:
+            messagebox.showwarning("Not Connected", "Please connect to a server first.")
+            return
+
+        if getattr(self, '_transfer_in_progress', False):
+            self.status_var.set("Another transfer is in progress. Please wait...")
+            return
+
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("No Selection", "Please select a file to download.")
+            return
+
+        item = self.tree.item(sel[0])
+        values = item.get('values') or []
+        item_type = values[1] if len(values) > 1 else None
+        if item_type != 'File':
+            messagebox.showwarning("Invalid Selection", "Please select a file (not a directory).")
+            return
+
+        filename = item['text']
+        remote_path = posixpath.normpath(posixpath.join(self.current_path.get(), filename))
+
+        # Ask for local save location
+        local_path = filedialog.asksaveasfilename(title="Save As", initialfile=filename)
+        if not local_path:
+            return
+
+        local_path_obj = Path(local_path)
+        if local_path_obj.exists() and local_path_obj.is_dir():
+            messagebox.showerror("Download Error", "A directory exists at the chosen path. Please choose a file path.")
+            return
+        if local_path_obj.exists():
+            if not messagebox.askyesno("Overwrite?", f"'{local_path_obj.name}' already exists. Overwrite?"):
+                return
+
+        # Run download in background
+        self._transfer_in_progress = True
+        self.status_var.set(f"Downloading {filename}...")
+        self.set_enabled(False)
+
+        def _do_download():
+            err = None
+            try:
+                self.sftp_client.get(remote_path, str(local_path_obj))
+            except Exception as e:
+                err = e
+            finally:
+                try:
+                    self.after(0, lambda: self._after_download(filename, str(local_path_obj), err))
+                except Exception:
+                    pass
+
+        threading.Thread(target=_do_download, daemon=True).start()
+
+    def _after_download(self, filename: str, local_path: str, err: Optional[Exception]):
+        self._transfer_in_progress = False
+        self.set_enabled(True)
+        if err is None:
+            self.status_var.set(f"Downloaded {filename} to {local_path}")
+        else:
+            self.status_var.set(f"Download failed: {err}")
+            messagebox.showerror("Download Failed", f"Could not download file:\n{err}")
+
+    # ----- Editor features -----
+    def _set_editor_enabled(self, enabled: bool):
+        state = 'normal' if enabled else 'disabled'
+        self.save_button.config(state=state)
+        self.search_entry.config(state=state)
+        self.find_next_button.config(state=state)
+        self.editor_text.config(state=state)
+
+    def _on_text_modified(self, event=None):
+        # Tk sets the modified flag continuously; we need to reset it
+        if self.editor_text.edit_modified():
+            self._editor_dirty = True
+            self.status_var.set(f"Editing: {self.open_file_path or ''} (modified)")
+            self.editor_text.edit_modified(False)
+
+    def open_remote_file(self, remote_path: str):
+        if not self.sftp_client:
+            return
+        # Limit preview size to ~2MB to avoid freezing UI
+        MAX_PREVIEW_BYTES = 2_000_000
+        try:
+            attr = self.sftp_client.stat(remote_path)
+            if stat.S_ISDIR(attr.st_mode):
+                return
+            if attr.st_size > MAX_PREVIEW_BYTES:
+                messagebox.showwarning("Large File", "File is larger than 2MB. Download it instead for viewing.")
+                return
+            with self.sftp_client.open(remote_path, 'r') as f:
+                raw = f.read()
+            if b'\x00' in raw:
+                messagebox.showwarning("Binary File", "This file appears to be binary and cannot be previewed.")
+                return
+            try:
+                text = raw.decode('utf-8')
+            except UnicodeDecodeError:
+                # Fallback with replacement to display something
+                text = raw.decode('utf-8', errors='replace')
+            # Load into editor
+            self.editor_text.config(state='normal')
+            self.editor_text.delete('1.0', 'end')
+            self.editor_text.insert('1.0', text)
+            self.editor_text.edit_modified(False)
+            self._editor_dirty = False
+            self.open_file_path = remote_path
+            self._clear_search_highlight()
+            self._set_editor_enabled(True)
+            self.status_var.set(f"Opened: {remote_path}")
+        except Exception as e:
+            messagebox.showerror("Open Failed", f"Could not open remote file:\n{e}")
+
+    def save_open_file(self):
+        if not self.sftp_client or not self.open_file_path:
+            return
+        content = self.editor_text.get('1.0', 'end-1c')
+        if not messagebox.askyesno("Confirm Save", f"Save changes to {self.open_file_path}?"):
+            return
+        self.status_var.set("Saving...")
+        self._set_editor_enabled(False)
+        def _do_save():
+            err = None
+            try:
+                with self.sftp_client.open(self.open_file_path, 'w') as f:
+                    f.write(content)
+            except Exception as e:
+                err = e
+            finally:
+                try:
+                    self.after(0, lambda: self._after_save(err))
+                except Exception:
+                    pass
+        threading.Thread(target=_do_save, daemon=True).start()
+
+    def _after_save(self, err: Optional[Exception]):
+        self._set_editor_enabled(True)
+        if err is None:
+            self._editor_dirty = False
+            self.editor_text.edit_modified(False)
+            self.status_var.set(f"Saved: {self.open_file_path}")
+            # Optionally refresh directory to update size/mtime
+            cur = self.current_path.get()
+            self.list_directory(cur)
+        else:
+            self.status_var.set(f"Save failed: {err}")
+            messagebox.showerror("Save Failed", f"Could not save file:\n{err}")
+
+    def _clear_search_highlight(self):
+        self.editor_text.tag_remove('search_highlight', '1.0', 'end')
+
+    def _highlight_all(self, pattern: str):
+        self._clear_search_highlight()
+        if not pattern:
+            return
+        start = '1.0'
+        while True:
+            idx = self.editor_text.search(pattern, start, stopindex='end')
+            if not idx:
+                break
+            end = f"{idx}+{len(pattern)}c"
+            self.editor_text.tag_add('search_highlight', idx, end)
+            start = end
+
+    def find_next(self):
+        pattern = self.search_var.get()
+        if not pattern:
+            return
+        self._highlight_all(pattern)
+        # Find next from current insert position
+        start = self.editor_text.index('insert')
+        idx = self.editor_text.search(pattern, start, stopindex='end')
+        if not idx:
+            # Wrap around
+            idx = self.editor_text.search(pattern, '1.0', stopindex='end')
+            if not idx:
+                return
+        end = f"{idx}+{len(pattern)}c"
+        self.editor_text.see(idx)
+        self.editor_text.tag_remove('sel', '1.0', 'end')
+        self.editor_text.tag_add('sel', idx, end)
 
 class ServerDialog:
     """Dialog for adding/editing server information."""
