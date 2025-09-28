@@ -236,28 +236,48 @@ class ServerManagerGUI:
         self.disconnect_button = ttk.Button(button_frame, text="Disconnect", command=self.disconnect_from_server)
         self.disconnect_button.pack(side=tk.LEFT, padx=5)
 
-        # Right panel: embedded remote file browser
+        # Right panel: notebook with tabs (File Management selected, Server empty)
         right_panel = ttk.Frame(paned, padding="5")
         right_panel.columnconfigure(0, weight=1)
-        right_panel.rowconfigure(2, weight=1)
+        right_panel.rowconfigure(0, weight=1)
 
-        ttk.Label(right_panel, text="Remote Files", font=("Arial", 11, "bold")).grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+        # Style: add padding to tab labels and margins, and spacing between tabs and content
+        try:
+            style = ttk.Style(self.root)
+            style.configure('Custom.TNotebook.Tab', padding=(12, 6))  # tab label padding (x, y)
+            style.configure('Custom.TNotebook', tabmargins=(6, 6, 6, 0))  # space around tab area
+        except Exception:
+            pass
 
-        # Toolbar under the "Remote Files" label
-        toolbar = ttk.Frame(right_panel)
-        toolbar.grid(row=1, column=0, sticky=tk.W, pady=(0, 5))
+        notebook = ttk.Notebook(right_panel, style='Custom.TNotebook')
+        notebook.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+
+        # File Management tab
+        file_mgmt_tab = ttk.Frame(notebook, padding=(10, 12, 10, 10))  # add content padding (l, t, r, b)
+        file_mgmt_tab.columnconfigure(0, weight=1)
+        file_mgmt_tab.rowconfigure(1, weight=1)
+
+        toolbar = ttk.Frame(file_mgmt_tab)
+        toolbar.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
         self.upload_button = ttk.Button(toolbar, text="Upload", command=self.on_upload_click, state='disabled')
         self.upload_button.pack(side=tk.LEFT)
         self.download_button = ttk.Button(toolbar, text="Download", command=self.on_download_click, state='disabled')
         self.download_button.pack(side=tk.LEFT, padx=(5, 0))
 
-        self.file_browser = RemoteFileBrowserFrame(right_panel)
-        self.file_browser.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+        self.file_browser = RemoteFileBrowserFrame(file_mgmt_tab)
+        self.file_browser.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+
+        # Empty Server tab
+        server_tab = ttk.Frame(notebook, padding=(10, 12, 10, 10))
+
+        notebook.add(file_mgmt_tab, text="File Management")
+        notebook.add(server_tab, text="Server")
+        notebook.select(file_mgmt_tab)
 
         paned.add(left_panel, weight=1)
         paned.add(right_panel, weight=2)
 
-        # Status bar at bottom
+    # Status bar at bottom
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
