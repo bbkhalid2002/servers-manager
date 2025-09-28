@@ -198,6 +198,7 @@ class ServerManagerGUI:
         # Paned window split: left servers list, right file browser
         paned = ttk.Panedwindow(main_frame, orient=tk.HORIZONTAL)
         paned.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+        self.paned = paned
 
         # Left panel: servers
         left_panel = ttk.Frame(paned, padding="5")
@@ -261,6 +262,41 @@ class ServerManagerGUI:
         self.status_var.set("Ready")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(8, 0))
+
+        # Set default left pane width to 25% of screen (with clamping), without locking resizing
+        try:
+            self.root.after(150, self._set_initial_sash)
+        except Exception:
+            pass
+
+    def _set_initial_sash(self):
+        try:
+            self.root.update_idletasks()
+            pw = self.paned.winfo_width()
+            # If paned width isn't laid out yet, retry shortly
+            if pw <= 1:
+                self.root.after(150, self._set_initial_sash)
+                return
+            desired_left = int(pw * 0.25)
+            # Keep both panes visible
+            min_side = 150
+            # Clamp desired position inside [min_side, pw - min_side]
+            max_left = max(min_side, pw - min_side)
+            pos = max(min_side, min(desired_left, max_left))
+            # Apply position
+            try:
+                self.paned.sashpos(0, pos)
+            except Exception:
+                # Retry once after a brief delay if size isn't ready yet
+                self.root.after(150, lambda: self._safe_set_sash(pos))
+        except Exception:
+            pass
+
+    def _safe_set_sash(self, pos: int):
+        try:
+            self.paned.sashpos(0, pos)
+        except Exception:
+            pass
 
     def set_controls_enabled(self, enabled: bool):
         """Enable or disable interactive controls."""
@@ -474,6 +510,7 @@ class RemoteFileBrowserFrame(ttk.Frame):
         self._context_menu = tk.Menu(self, tearoff=0)
         self._context_menu.add_command(label="Change Permissions", command=self.change_permissions_selected)
         self._context_menu.add_command(label="Change Owner/Group", command=self.change_owner_group_selected)
+        self._context_menu.add_command(label="Download", command=self.prompt_and_download)
         self._context_menu.add_separator()
         self._context_menu.add_command(label="Delete", command=self.delete_selected)
 
@@ -710,13 +747,19 @@ class RemoteFileBrowserFrame(ttk.Frame):
         if row_id:
             self.tree.selection_set(row_id)
             self.tree.focus(row_id)
-            # Enable/disable Delete based on type if desired
+            # Enable/disable menu items based on whether it's a file or directory
             try:
                 item = self.tree.item(row_id)
-                # values inspected on actions; presence checked here just to avoid errors
-                _ = item.get('values') or []
+                values = item.get('values') or []
+                item_type = values[1] if len(values) > 1 else None
+                is_file = item_type == 'File'
+                # indices: 0=Change Permissions,1=Change Owner/Group,2=sep,3=Download,4=Delete
+                self._context_menu.entryconfigure(3, state='normal' if is_file else 'disabled')  # Download
+                self._context_menu.entryconfigure(4, state='normal' if is_file else 'disabled')  # Delete
             except Exception:
-                pass
+                # Fall back to enabling everything
+                self._context_menu.entryconfigure(3, state='normal')
+                self._context_menu.entryconfigure(4, state='normal')
             self._context_menu.tk_popup(event.x_root, event.y_root)
         else:
             # Clicked empty area; optionally could show generic menu
