@@ -129,6 +129,35 @@ class CredentialManager:
         """Get a sorted list of all server names."""
         return sorted(list(self.servers.keys()))
 
+    # ----- Favorite services persistence -----
+    def get_services(self, name: str) -> List[str]:
+        data = self.servers.get(name) or {}
+        svcs = data.get('services')
+        if isinstance(svcs, list):
+            # keep only strings, unique preserve order
+            seen = set()
+            out = []
+            for s in svcs:
+                if isinstance(s, str) and s not in seen:
+                    seen.add(s)
+                    out.append(s)
+            return out
+        return []
+
+    def set_services(self, name: str, services: List[str]):
+        if name not in self.servers:
+            return
+        # normalize list
+        norm = []
+        seen = set()
+        for s in services:
+            s = str(s).strip()
+            if s and s not in seen:
+                seen.add(s)
+                norm.append(s)
+        self.servers[name]['services'] = norm
+        self.save_data()
+
 class SSHConnection:
     """Handles SSH connections to remote servers."""
     
@@ -184,6 +213,18 @@ class ServerManagerGUI:
     
     def setup_ui(self):
         """Setup the main user interface."""
+        # Menu bar
+        menubar = tk.Menu(self.root)
+        servers_menu = tk.Menu(menubar, tearoff=0)
+        servers_menu.add_command(label="Add", command=self.add_server_dialog)
+        servers_menu.add_command(label="Edit", command=self.edit_server_dialog)
+        servers_menu.add_command(label="Delete", command=self.delete_server)
+        servers_menu.add_separator()
+        servers_menu.add_command(label="Connect", command=self.connect_to_server)
+        servers_menu.add_command(label="Disconnect", command=self.disconnect_from_server)
+        menubar.add_cascade(label="Servers", menu=servers_menu)
+        self.root.config(menu=menubar)
+
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
@@ -221,21 +262,6 @@ class ServerManagerGUI:
         # Double-click action on server item
         self.server_listbox.bind("<Double-1>", self.on_server_double_click)
 
-        # Buttons panel
-        button_frame = ttk.Frame(left_panel)
-        button_frame.grid(row=2, column=0, pady=(8, 0), sticky=tk.W)
-        
-        self.add_button = ttk.Button(button_frame, text="Add", command=self.add_server_dialog)
-        self.add_button.pack(side=tk.LEFT, padx=(0, 5))
-        self.edit_button = ttk.Button(button_frame, text="Edit", command=self.edit_server_dialog)
-        self.edit_button.pack(side=tk.LEFT, padx=5)
-        self.delete_button = ttk.Button(button_frame, text="Delete", command=self.delete_server)
-        self.delete_button.pack(side=tk.LEFT, padx=5)
-        self.connect_button = ttk.Button(button_frame, text="Connect", command=self.connect_to_server)
-        self.connect_button.pack(side=tk.LEFT, padx=5)
-        self.disconnect_button = ttk.Button(button_frame, text="Disconnect", command=self.disconnect_from_server)
-        self.disconnect_button.pack(side=tk.LEFT, padx=5)
-
         # Right panel: notebook with tabs (File Management selected, Server empty)
         right_panel = ttk.Frame(paned, padding="5")
         right_panel.columnconfigure(0, weight=1)
@@ -267,11 +293,83 @@ class ServerManagerGUI:
         self.file_browser = RemoteFileBrowserFrame(file_mgmt_tab)
         self.file_browser.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
 
-        # Empty Server tab
+        # Server tab - manage favorite services
         server_tab = ttk.Frame(notebook, padding=(10, 12, 10, 10))
+        server_tab.columnconfigure(0, weight=1)
+        server_tab.rowconfigure(1, weight=1)
+
+        server_toolbar = ttk.Frame(server_tab)
+        server_toolbar.grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
+        ttk.Label(server_toolbar, text="Service:").pack(side=tk.LEFT)
+        self.service_name_var = tk.StringVar()
+        self.service_entry = ttk.Entry(server_toolbar, textvariable=self.service_name_var, width=30)
+        self.service_entry.pack(side=tk.LEFT, padx=(6, 6))
+        # Update Add button state as the user types and allow Enter key to add
+        try:
+            self.service_name_var.trace_add('write', lambda *args: self._update_service_actions_state())
+        except Exception:
+            # Fallback for very old Tk versions
+            try:
+                self.service_name_var.trace('w', lambda *args: self._update_service_actions_state())
+            except Exception:
+                pass
+        self.service_entry.bind('<Return>', lambda e: self._add_service())
+        self.add_service_btn = ttk.Button(server_toolbar, text="Add", command=self._add_service, state='disabled')
+        self.add_service_btn.pack(side=tk.LEFT)
+        self.remove_service_btn = ttk.Button(server_toolbar, text="Remove", command=self._remove_selected_service, state='disabled')
+        self.remove_service_btn.pack(side=tk.LEFT, padx=(6, 0))
+
+        # Services list (Treeview with Service and Status columns)
+        svc_frame = ttk.Frame(server_tab)
+        svc_frame.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+        svc_frame.columnconfigure(0, weight=1)
+        svc_frame.rowconfigure(0, weight=1)
+        self.services_tree = ttk.Treeview(svc_frame, columns=("service", "status"), show="headings", selectmode='browse')
+        self.services_tree.heading("service", text="Service")
+        self.services_tree.heading("status", text="Status")
+        self.services_tree.column("service", width=260, anchor='w')
+        self.services_tree.column("status", width=120, anchor='w')
+        svc_scroll = ttk.Scrollbar(svc_frame, orient='vertical', command=self.services_tree.yview)
+        self.services_tree.configure(yscrollcommand=svc_scroll.set)
+        self.services_tree.grid(row=0, column=0, sticky='nsew')
+        svc_scroll.grid(row=0, column=1, sticky='ns')
+        self.services_tree.bind('<<TreeviewSelect>>', lambda e: self._update_service_actions_state())
+        # Context menu for services (Start/Stop/Status)
+        self._services_menu = tk.Menu(server_tab, tearoff=0)
+        self._services_menu.add_command(label='Start', command=lambda: self._svc_action('start'))
+        self._services_menu.add_command(label='Stop', command=lambda: self._svc_action('stop'))
+        self._services_menu.add_command(label='Status', command=lambda: self._svc_action('status'))
+        def _on_services_right_click(event):
+            row_id = self.services_tree.identify_row(event.y)
+            if row_id:
+                self.services_tree.selection_set(row_id)
+                self.services_tree.focus(row_id)
+                # Enable/disable actions based on connection state and selection
+                enabled = self.ssh_connection.is_connected()
+                state = 'normal' if enabled else 'disabled'
+                try:
+                    self._services_menu.entryconfigure(0, state=state)
+                    self._services_menu.entryconfigure(1, state=state)
+                    self._services_menu.entryconfigure(2, state=state)
+                except Exception:
+                    pass
+                try:
+                    self._services_menu.tk_popup(event.x_root, event.y_root)
+                finally:
+                    self._services_menu.grab_release()
+        self.services_tree.bind('<Button-3>', _on_services_right_click)
+
+        # Action buttons
+        actions = ttk.Frame(server_tab)
+        actions.grid(row=2, column=0, sticky=tk.W, pady=(8, 0))
+        self.svc_start_btn = ttk.Button(actions, text='Start', command=lambda: self._svc_action('start'), state='disabled')
+        self.svc_stop_btn = ttk.Button(actions, text='Stop', command=lambda: self._svc_action('stop'), state='disabled')
+        self.svc_status_btn = ttk.Button(actions, text='Status', command=lambda: self._svc_action('status'), state='disabled')
+        for b in (self.svc_start_btn, self.svc_stop_btn, self.svc_status_btn):
+            b.pack(side=tk.LEFT, padx=(0, 6))
 
         notebook.add(file_mgmt_tab, text="File Management")
-        notebook.add(server_tab, text="Server")
+        notebook.add(server_tab, text="Services")
         notebook.select(file_mgmt_tab)
 
         paned.add(left_panel, weight=1)
@@ -321,11 +419,7 @@ class ServerManagerGUI:
     def set_controls_enabled(self, enabled: bool):
         """Enable or disable interactive controls."""
         state = 'normal' if enabled else 'disabled'
-        self.add_button.config(state=state)
-        self.edit_button.config(state=state)
-        self.delete_button.config(state=state)
-        self.connect_button.config(state=state)
-        self.disconnect_button.config(state=state)
+        # top menu remains active; only listbox gets toggled here
         self.server_listbox.config(state=state)
         # Upload button follows connection state elsewhere; don't toggle here
 
@@ -441,6 +535,8 @@ class ServerManagerGUI:
             # Enable upload when connected
             self.upload_button.config(state='normal')
             self.download_button.config(state='normal')
+            # Load services for this server and enable UI
+            self._load_services_for_connected()
         else:
             self.connected_server_name = None
             self.file_browser.attach_client(None)
@@ -456,6 +552,12 @@ class ServerManagerGUI:
             self.file_browser.attach_client(None)
             self.upload_button.config(state='disabled')
             self.download_button.config(state='disabled')
+            # Clear/disable services UI
+            try:
+                self.services_tree.delete(*self.services_tree.get_children())
+                self._set_services_ui_enabled(False)
+            except Exception:
+                pass
             self.status_var.set("Disconnected")
             messagebox.showinfo("Disconnected", "Disconnected from server.")
         else:
@@ -468,6 +570,220 @@ class ServerManagerGUI:
     def on_download_click(self):
         """Handle click on Download button to download selected file from remote to local."""
         self.file_browser.prompt_and_download()
+
+    # ----- Server tab: favorite services management -----
+    def _load_services_for_connected(self):
+        # Load services list when connected server changes
+        # reset tree and populate raw services (status refreshed asynchronously)
+        try:
+            self.services_tree.delete(*self.services_tree.get_children())
+        except Exception:
+            pass
+        if not self.connected_server_name:
+            self._set_services_ui_enabled(False)
+            return
+        svcs = self.credential_manager.get_services(self.connected_server_name)
+        for s in svcs:
+            self.services_tree.insert('', 'end', values=(s, ''))
+        self._set_services_ui_enabled(self.ssh_connection.is_connected())
+        self._update_service_actions_state()
+        # Refresh statuses to annotate items
+        self._refresh_services_status_async()
+
+    def _set_services_ui_enabled(self, enabled: bool):
+        state = 'normal' if enabled else 'disabled'
+        # Buttons and entry
+        for w in (self.add_service_btn, self.remove_service_btn, self.svc_start_btn,
+                   self.svc_stop_btn, self.svc_status_btn,
+                   self.service_entry):
+            try:
+                w.config(state=state)
+            except Exception:
+                pass
+        # Treeview selection mode behaves as enable/disable
+        try:
+            self.services_tree.configure(selectmode='browse' if enabled else 'none')
+        except Exception:
+            pass
+        # After generic toggle, refine action buttons based on selection
+        self._update_service_actions_state()
+
+    def _update_service_actions_state(self):
+        enabled = self.ssh_connection.is_connected()
+        sel = self.services_tree.selection()
+        is_sel = bool(sel)
+        for b in (self.remove_service_btn, self.svc_start_btn, self.svc_stop_btn, self.svc_status_btn):
+            b.config(state='normal' if (enabled and is_sel) else 'disabled')
+        # Add button enabled if entry has text and connected
+        name = (self.service_name_var.get() or '').strip()
+        self.add_service_btn.config(state='normal' if (enabled and name) else 'disabled')
+
+    def _add_service(self):
+        name = (self.service_name_var.get() or '').strip()
+        if not name:
+            return
+        # insert if not exist
+        # existing services from tree
+        existing = []
+        try:
+            for iid in self.services_tree.get_children():
+                vals = self.services_tree.item(iid).get('values') or []
+                if vals:
+                    existing.append(str(vals[0]))
+        except Exception:
+            pass
+        if name in existing:
+            messagebox.showinfo('Service Exists', f"'{name}' is already in favorites.")
+            return
+        self.services_tree.insert('', 'end', values=(name, ''))
+        self.service_name_var.set('')
+        self._persist_services()
+        self._refresh_services_status_async()
+        self._update_service_actions_state()
+
+    def _remove_selected_service(self):
+        sel = self.services_tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        vals = self.services_tree.item(iid).get('values') or []
+        name = vals[0] if vals else ''
+        if not messagebox.askyesno('Remove Service', f"Remove '{name}' from favorites?"):
+            return
+        try:
+            self.services_tree.delete(iid)
+        except Exception:
+            pass
+        self._persist_services()
+        self._refresh_services_status_async()
+        self._update_service_actions_state()
+
+    def _persist_services(self):
+        if not self.connected_server_name:
+            return
+        # Collect raw service names from tree
+        raw = []
+        try:
+            for iid in self.services_tree.get_children():
+                vals = self.services_tree.item(iid).get('values') or []
+                if vals:
+                    name = str(vals[0]).strip()
+                    if name:
+                        raw.append(name)
+        except Exception:
+            pass
+        self.credential_manager.set_services(self.connected_server_name, raw)
+
+    def _svc_action(self, action: str):
+        if not self.ssh_connection.is_connected():
+            messagebox.showwarning('Not Connected', 'Connect to a server first.')
+            return
+        sel = self.services_tree.selection()
+        if not sel:
+            return
+        vals = self.services_tree.item(sel[0]).get('values') or []
+        service = vals[0] if vals else ''
+        # Map action to command
+        cmd = None
+        if action in ('start', 'stop', 'status'):
+            # Use sudo -n (no prompt) and capture accordingly; status shouldn't require sudo
+            if action == 'status':
+                cmd = f"systemctl status --no-pager {service}"
+            else:
+                cmd = f"sudo -n systemctl {action} {service} || systemctl {action} {service}"
+        if not cmd:
+            return
+        if action in ('start', 'stop'):
+            # Run silently and refresh status
+            try:
+                self.ssh_connection.client.exec_command(cmd)
+            except Exception as e:
+                messagebox.showerror('SSH Error', f"Failed to execute command:\n{e}")
+                return
+            # give systemd a moment and refresh
+            self.root.after(500, self._refresh_services_status_async)
+        elif action == 'status':
+            # status: show popup
+            self._run_remote_cmd(cmd, title=f"systemctl {action} {service}")
+
+    def _run_remote_cmd(self, cmd: str, title: str = 'Command Output'):
+        try:
+            stdin, stdout, stderr = self.ssh_connection.client.exec_command(cmd)
+            out = stdout.read().decode('utf-8', errors='replace')
+            err = stderr.read().decode('utf-8', errors='replace')
+        except Exception as e:
+            messagebox.showerror('SSH Error', f"Failed to execute command:\n{e}")
+            return
+        # Show output in a simple dialog
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        frm = ttk.Frame(dlg, padding=10)
+        frm.grid(row=0, column=0, sticky='nsew')
+        dlg.columnconfigure(0, weight=1)
+        dlg.rowconfigure(0, weight=1)
+        txt = tk.Text(frm, wrap='word', height=30, width=100)
+        scr = ttk.Scrollbar(frm, orient='vertical', command=txt.yview)
+        txt.configure(yscrollcommand=scr.set)
+        txt.grid(row=0, column=0, sticky='nsew')
+        scr.grid(row=0, column=1, sticky='ns')
+        txt.insert('1.0', out if out.strip() else err)
+        txt.config(state='disabled')
+        ttk.Button(frm, text='Close', command=dlg.destroy).grid(row=1, column=0, pady=(8,0), sticky='e')
+        try:
+            center_window(dlg, self.root)
+        except Exception:
+            pass
+
+    # ----- Status refresh helpers -----
+    def _refresh_services_status_async(self):
+        if not self.ssh_connection.is_connected():
+            return
+        # Run in background thread to avoid blocking UI
+        def worker():
+            try:
+                services = self.credential_manager.get_services(self.connected_server_name or '')
+                statuses = []
+                for s in services:
+                    try:
+                        cmd = f"systemctl is-active {s} || true"
+                        stdin, stdout, stderr = self.ssh_connection.client.exec_command(cmd)
+                        out = stdout.read().decode('utf-8', errors='ignore').strip()
+                        status = out if out else 'unknown'
+                    except Exception:
+                        status = 'unknown'
+                    statuses.append((s, status))
+            except Exception:
+                statuses = []
+            # Update UI on main thread
+            def update_ui():
+                try:
+                    # Keep current selection by service name if possible
+                    prev_sel = None
+                    try:
+                        sel = self.services_tree.selection()
+                        if sel:
+                            vals = self.services_tree.item(sel[0]).get('values') or []
+                            prev_sel = vals[0] if vals else None
+                    except Exception:
+                        prev_sel = None
+                    self.services_tree.delete(*self.services_tree.get_children())
+                    selected_iid = None
+                    for name, st in statuses:
+                        iid = self.services_tree.insert('', 'end', values=(name, st))
+                        if prev_sel and name == prev_sel:
+                            selected_iid = iid
+                    if selected_iid:
+                        self.services_tree.selection_set(selected_iid)
+                        self.services_tree.focus(selected_iid)
+                except Exception:
+                    pass
+            try:
+                self.root.after(0, update_ui)
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
 
 class RemoteFileBrowserFrame(ttk.Frame):
     """Embeddable SFTP browser frame for the main window right pane."""
