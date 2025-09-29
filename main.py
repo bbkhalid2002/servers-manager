@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 import posixpath
 import stat
 import os
+import time
 
 try:
     import paramiko
@@ -235,6 +236,10 @@ class ServerManagerGUI:
         servers_menu.add_command(label="Connect", command=self.connect_to_server)
         servers_menu.add_command(label="Disconnect", command=self.disconnect_from_server)
         menubar.add_cascade(label="Servers", menu=servers_menu)
+        # Help menu with About
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="About", command=self.show_about)
+        menubar.add_cascade(label="Help", menu=help_menu)
         self.root.config(menu=menubar)
 
         main_frame = ttk.Frame(self.root, padding="10")
@@ -245,8 +250,7 @@ class ServerManagerGUI:
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(1, weight=1)
         
-        title_label = ttk.Label(main_frame, text="SSH Server Manager", font=("Arial", 16, "bold"))
-        title_label.grid(row=0, column=0, sticky=(tk.W), pady=(0, 10))
+        # Removed top title label per request
 
         # Paned window split: left servers list, right file browser
         paned = ttk.Panedwindow(main_frame, orient=tk.HORIZONTAL)
@@ -275,7 +279,7 @@ class ServerManagerGUI:
             self._server_icon = None
 
         # Use Treeview to support per-row icons
-        self.server_tree = ttk.Treeview(servers_frame, show='tree')
+        self.server_tree = ttk.Treeview(servers_frame, show='tree', style='ServerList.Treeview')
         scrollbar = ttk.Scrollbar(servers_frame, orient='vertical', command=self.server_tree.yview)
         self.server_tree.configure(yscrollcommand=scrollbar.set)
         self.server_tree.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
@@ -301,6 +305,8 @@ class ServerManagerGUI:
             style = ttk.Style(self.root)
             style.configure('Custom.TNotebook.Tab', padding=(12, 6))  # tab label padding (x, y)
             style.configure('Custom.TNotebook', tabmargins=(6, 6, 6, 0))  # space around tab area
+            # Ensure servers list rows match 16x16 icon height
+            style.configure('ServerList.Treeview', rowheight=16)
         except Exception:
             pass
 
@@ -1056,6 +1062,35 @@ class ServerManagerGUI:
             except Exception:
                 pass
 
+    def show_about(self):
+        """Show the About dialog window."""
+        try:
+            dlg = tk.Toplevel(self.root)
+            dlg.title("About")
+            dlg.transient(self.root)
+            dlg.grab_set()
+            frm = ttk.Frame(dlg, padding=12)
+            frm.grid(row=0, column=0, sticky='nsew')
+            dlg.columnconfigure(0, weight=1)
+            dlg.rowconfigure(0, weight=1)
+
+            msg = (
+                "Developed by AI in 2025 by great mind for a great team!"
+            )
+            ttk.Label(frm, text=msg, wraplength=420, justify='center').grid(row=0, column=0, pady=(0, 10))
+
+            ttk.Button(frm, text="OK", command=dlg.destroy).grid(row=1, column=0, sticky='e')
+            try:
+                center_window(dlg, self.root)
+            except Exception:
+                pass
+        except Exception:
+            # As a fallback, show a simple message box
+            try:
+                messagebox.showinfo("About", "Developed by AI in 2025 for a great team!")
+            except Exception:
+                pass
+
 class RemoteFileBrowserFrame(ttk.Frame):
     """Embeddable SFTP browser frame for the main window right pane."""
 
@@ -1091,15 +1126,21 @@ class RemoteFileBrowserFrame(ttk.Frame):
         tree_frame.columnconfigure(0, weight=1)
         tree_frame.rowconfigure(0, weight=1)
 
-        # Columns: keep size and type first to preserve existing logic, then owner/group/perms
-        self.tree = ttk.Treeview(tree_frame, columns=("size", "type", "owner", "group", "perms"), show="tree headings")
+        # Columns: size, type, date, owner, group, perms (name is the tree column #0)
+        self.tree = ttk.Treeview(
+            tree_frame,
+            columns=("size", "type", "date", "owner", "group", "perms"),
+            show="tree headings"
+        )
         self.tree.heading("size", text="Size")
         self.tree.heading("type", text="Type")
+        self.tree.heading("date", text="Date")
         self.tree.heading("owner", text="Owner")
         self.tree.heading("group", text="Group")
         self.tree.heading("perms", text="Permissions")
         self.tree.column("size", width=90, anchor='e')
         self.tree.column("type", width=80, anchor='w')
+        self.tree.column("date", width=150, anchor='w')
         self.tree.column("owner", width=120, anchor='w')
         self.tree.column("group", width=120, anchor='w')
         self.tree.column("perms", width=110, anchor='w')
@@ -1121,26 +1162,28 @@ class RemoteFileBrowserFrame(ttk.Frame):
         self._context_menu.add_separator()
         self._context_menu.add_command(label="Delete", command=self.delete_selected)
 
-        # Editor toolbar (Save + Search)
+        # Editor toolbar (Save + Search) aligned to the right side
         editor_toolbar = ttk.Frame(self)
         editor_toolbar.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
-        editor_toolbar.columnconfigure(4, weight=1)
+        # Container anchored to the right so controls appear on the right edge
+        editor_right = ttk.Frame(editor_toolbar)
+        editor_right.pack(side=tk.RIGHT)
 
-        ttk.Label(editor_toolbar, text="Editor:").grid(row=0, column=0, padx=(0, 6))
-        self.save_button = ttk.Button(editor_toolbar, text="Save", command=self.save_open_file, state='disabled')
-        self.save_button.grid(row=0, column=1)
+        ttk.Label(editor_right, text="Editor:").pack(side=tk.LEFT, padx=(0, 6))
+        self.save_button = ttk.Button(editor_right, text="Save", command=self.save_open_file, state='disabled')
+        self.save_button.pack(side=tk.LEFT)
 
-        ttk.Label(editor_toolbar, text="Search:").grid(row=0, column=2, padx=(10, 6))
+        ttk.Label(editor_right, text="Search:").pack(side=tk.LEFT, padx=(10, 6))
         self.search_var = tk.StringVar()
-        self.search_entry = ttk.Entry(editor_toolbar, textvariable=self.search_var, state='disabled')
-        self.search_entry.grid(row=0, column=3, sticky=(tk.W, tk.E))
+        self.search_entry = ttk.Entry(editor_right, textvariable=self.search_var, state='disabled')
+        self.search_entry.pack(side=tk.LEFT)
         # Press Enter in the search box to trigger Find Next
         try:
             self.search_entry.bind('<Return>', lambda e: self.find_next())
         except Exception:
             pass
-        self.find_next_button = ttk.Button(editor_toolbar, text="Find Next", command=self.find_next, state='disabled')
-        self.find_next_button.grid(row=0, column=4, padx=(6, 0), sticky=tk.W)
+        self.find_next_button = ttk.Button(editor_right, text="Find Next", command=self.find_next, state='disabled')
+        self.find_next_button.pack(side=tk.LEFT, padx=(6, 0))
 
         # Editor text area
         editor_frame = ttk.Frame(self)
@@ -1242,12 +1285,18 @@ class RemoteFileBrowserFrame(ttk.Frame):
                 gid = getattr(attr, 'st_gid', None)
                 owner = self._uid_cache.get(uid, str(uid) if uid is not None else '?')
                 group = self._gid_cache.get(gid, str(gid) if gid is not None else '?')
-                entry = (attr.filename, attr.st_size, is_dir, owner, group, perms)
+                # Format modification time if available
+                try:
+                    mtime = getattr(attr, 'st_mtime', None)
+                    date_str = time.strftime('%Y-%m-%d %H:%M', time.localtime(mtime)) if isinstance(mtime, (int, float)) else ''
+                except Exception:
+                    date_str = ''
+                entry = (attr.filename, attr.st_size, is_dir, date_str, owner, group, perms)
                 (dirs if is_dir else files).append(entry)
             dirs.sort(key=lambda x: x[0].lower())
             files.sort(key=lambda x: x[0].lower())
-            for name, size, is_dir, owner, group, perms in dirs + files:
-                values = (size, "Directory" if is_dir else "File", owner, group, perms)
+            for name, size, is_dir, date_str, owner, group, perms in dirs + files:
+                values = (size, "Directory" if is_dir else "File", date_str, owner, group, perms)
                 tags = ('directory',) if is_dir else ()
                 self.tree.insert("", "end", text=name, values=values, tags=tags)
             self.tree.tag_configure('directory', foreground='blue', font=('TkDefaultFont', 9, 'bold'))
