@@ -319,7 +319,11 @@ class ServerManagerGUI:
         file_mgmt_tab.rowconfigure(1, weight=1)
 
         toolbar = ttk.Frame(file_mgmt_tab)
-        toolbar.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+        # Make toolbar stretch horizontally so right-aligned content anchors to the right edge
+        toolbar.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        # Right-aligned container for buttons
+        file_actions_right = ttk.Frame(toolbar)
+        file_actions_right.pack(side=tk.RIGHT)
         # Load toolbar icons
         try:
             self._icon_upload = tk.PhotoImage(file=resource_path('server_manager_icons', 'upload.png'))
@@ -330,7 +334,7 @@ class ServerManagerGUI:
         except Exception:
             self._icon_download = None
         self.upload_button = ttk.Button(
-            toolbar,
+            file_actions_right,
             text="Upload",
             image=self._icon_upload,
             compound='left',
@@ -339,7 +343,7 @@ class ServerManagerGUI:
         )
         self.upload_button.pack(side=tk.LEFT)
         self.download_button = ttk.Button(
-            toolbar,
+            file_actions_right,
             text="Download",
             image=self._icon_download,
             compound='left',
@@ -360,7 +364,10 @@ class ServerManagerGUI:
 
         # Top actions toolbar (above services list): Start, Stop, Status (with icon), separator, Add Service
         top_actions = ttk.Frame(server_tab)
-        top_actions.grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
+        # Stretch horizontally and place actions on the right
+        top_actions.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        actions_right = ttk.Frame(top_actions)
+        actions_right.pack(side=tk.RIGHT)
         # Load start/stop/status icons
         try:
             self._icon_start = tk.PhotoImage(file=resource_path('server_manager_icons', 'start.png'))
@@ -384,7 +391,7 @@ class ServerManagerGUI:
         except Exception:
             self._icon_remove_service = None
         self.svc_start_btn = ttk.Button(
-            top_actions,
+            actions_right,
             text='Start',
             image=self._icon_start,
             compound='left',
@@ -393,7 +400,7 @@ class ServerManagerGUI:
         )
         self.svc_start_btn.pack(side=tk.LEFT, padx=(0, 6))
         self.svc_stop_btn = ttk.Button(
-            top_actions,
+            actions_right,
             text='Stop',
             image=self._icon_stop,
             compound='left',
@@ -402,7 +409,7 @@ class ServerManagerGUI:
         )
         self.svc_stop_btn.pack(side=tk.LEFT, padx=(0, 6))
         self.svc_status_btn = ttk.Button(
-            top_actions,
+            actions_right,
             text='Status',
             image=self._icon_status,
             compound='left',
@@ -411,10 +418,10 @@ class ServerManagerGUI:
         )
         self.svc_status_btn.pack(side=tk.LEFT, padx=(0, 6))
         # Separator then "Add Service" button
-        sep = ttk.Separator(top_actions, orient='vertical')
+        sep = ttk.Separator(actions_right, orient='vertical')
         sep.pack(side=tk.LEFT, fill='y', padx=8)
         self.svc_add_btn = ttk.Button(
-            top_actions,
+            actions_right,
             text='Add Service',
             image=self._icon_add_service,
             compound='left',
@@ -424,7 +431,7 @@ class ServerManagerGUI:
         self.svc_add_btn.pack(side=tk.LEFT)
         # Button to remove selected service (next to Add Service)
         self.remove_service_btn = ttk.Button(
-            top_actions,
+            actions_right,
             text='Remove Service',
             image=self._icon_remove_service,
             compound='left',
@@ -506,7 +513,15 @@ class ServerManagerGUI:
         self._logs_find_entry.bind('<Return>', lambda e: self._find_next_in_logs())
         ttk.Button(find_bar, text="Find Next", command=self._find_next_in_logs).pack(side=tk.LEFT)
         # Text widget and scrollbar
-        self.svc_logs_text = tk.Text(logs_frame, height=10, wrap='word', state='disabled')
+        self.svc_logs_text = tk.Text(
+            logs_frame,
+            height=10,
+            wrap='word',
+            state='disabled',
+            foreground="#2CFF05",
+            background="#000000",
+            insertbackground='white'
+        )
         # highlight tag for find results
         try:
             self.svc_logs_text.tag_config('find_highlight', background='yellow', foreground='black')
@@ -1075,7 +1090,7 @@ class ServerManagerGUI:
             dlg.rowconfigure(0, weight=1)
 
             msg = (
-                "Developed by AI in 2025 by great mind for a great team!"
+                "Developed by AI in 2025 for a great team!"
             )
             ttk.Label(frm, text=msg, wraplength=420, justify='center').grid(row=0, column=0, pady=(0, 10))
 
@@ -1191,7 +1206,14 @@ class RemoteFileBrowserFrame(ttk.Frame):
         editor_frame.columnconfigure(0, weight=1)
         editor_frame.rowconfigure(0, weight=1)
 
-        self.editor_text = tk.Text(editor_frame, wrap='none', undo=True)
+        self.editor_text = tk.Text(
+            editor_frame,
+            wrap='none',
+            undo=True,
+            foreground="#2CFF05",
+            background="#000000",
+            insertbackground='white'
+        )
         self.editor_vscroll = ttk.Scrollbar(editor_frame, orient='vertical', command=self.editor_text.yview)
         self.editor_hscroll = ttk.Scrollbar(editor_frame, orient='horizontal', command=self.editor_text.xview)
         self.editor_text.configure(yscrollcommand=self.editor_vscroll.set, xscrollcommand=self.editor_hscroll.set)
@@ -1200,7 +1222,7 @@ class RemoteFileBrowserFrame(ttk.Frame):
         self.editor_hscroll.grid(row=1, column=0, sticky='ew')
 
         # Configure tags and bindings for editor
-        self.editor_text.tag_configure('search_highlight', background='yellow')
+        self.editor_text.tag_configure('search_highlight', background='yellow', foreground='black')
         self.editor_text.bind('<<Modified>>', self._on_text_modified)
 
         self.status_var = tk.StringVar(value="Not connected")
