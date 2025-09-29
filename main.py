@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import posixpath
 import stat
+import os
 
 try:
     import paramiko
@@ -70,6 +71,17 @@ def center_window(win: tk.Toplevel | tk.Tk, relative_to: Optional[tk.Misc] = Non
     except Exception:
         # Best-effort; ignore centering failures
         pass
+
+def resource_path(*relative_parts: str) -> str:
+    """Return an absolute path to a resource, working for dev and PyInstaller bundle.
+
+    Example: resource_path('server_manager_icons', 'server.png')
+    """
+    try:
+        base_path = getattr(sys, '_MEIPASS')  # type: ignore[attr-defined]
+    except Exception:
+        base_path = os.path.abspath(os.path.dirname(__file__))
+    return os.path.join(base_path, *relative_parts)
 
 class CredentialManager:
     """Handles storage and retrieval of SSH server credentials in a plain JSON file."""
@@ -253,14 +265,31 @@ class ServerManagerGUI:
         servers_frame.columnconfigure(0, weight=1)
         servers_frame.rowconfigure(0, weight=1)
 
-        self.server_listbox = tk.Listbox(servers_frame)
-        scrollbar = ttk.Scrollbar(servers_frame, orient="vertical", command=self.server_listbox.yview)
-        self.server_listbox.config(yscrollcommand=scrollbar.set)
-        self.server_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Load server icon (once)
+        self._server_icon = None
+        try:
+            icon_path = resource_path('server_manager_icons', 'server.png')
+            if os.path.exists(icon_path):
+                self._server_icon = tk.PhotoImage(file=icon_path)
+        except Exception:
+            self._server_icon = None
+
+        # Use Treeview to support per-row icons
+        self.server_tree = ttk.Treeview(servers_frame, show='tree')
+        scrollbar = ttk.Scrollbar(servers_frame, orient='vertical', command=self.server_tree.yview)
+        self.server_tree.configure(yscrollcommand=scrollbar.set)
+        self.server_tree.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
         scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
 
         # Double-click action on server item
-        self.server_listbox.bind("<Double-1>", self.on_server_double_click)
+        def _on_server_tree_double_click(event):
+            row_id = self.server_tree.identify_row(event.y)
+            if not row_id:
+                return
+            self.server_tree.selection_set(row_id)
+            self.server_tree.focus(row_id)
+            self.on_server_double_click(event)
+        self.server_tree.bind('<Double-1>', _on_server_tree_double_click)
 
         # Right panel: notebook with tabs (File Management selected, Server empty)
         right_panel = ttk.Frame(paned, padding="5")
@@ -285,9 +314,32 @@ class ServerManagerGUI:
 
         toolbar = ttk.Frame(file_mgmt_tab)
         toolbar.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
-        self.upload_button = ttk.Button(toolbar, text="Upload", command=self.on_upload_click, state='disabled')
+        # Load toolbar icons
+        try:
+            self._icon_upload = tk.PhotoImage(file=resource_path('server_manager_icons', 'upload.png'))
+        except Exception:
+            self._icon_upload = None
+        try:
+            self._icon_download = tk.PhotoImage(file=resource_path('server_manager_icons', 'download.png'))
+        except Exception:
+            self._icon_download = None
+        self.upload_button = ttk.Button(
+            toolbar,
+            text="Upload",
+            image=self._icon_upload,
+            compound='left',
+            command=self.on_upload_click,
+            state='disabled'
+        )
         self.upload_button.pack(side=tk.LEFT)
-        self.download_button = ttk.Button(toolbar, text="Download", command=self.on_download_click, state='disabled')
+        self.download_button = ttk.Button(
+            toolbar,
+            text="Download",
+            image=self._icon_download,
+            compound='left',
+            command=self.on_download_click,
+            state='disabled'
+        )
         self.download_button.pack(side=tk.LEFT, padx=(5, 0))
 
         self.file_browser = RemoteFileBrowserFrame(file_mgmt_tab)
@@ -296,31 +348,86 @@ class ServerManagerGUI:
         # Server tab - manage favorite services
         server_tab = ttk.Frame(notebook, padding=(10, 12, 10, 10))
         server_tab.columnconfigure(0, weight=1)
-        server_tab.rowconfigure(1, weight=1)  # services tree
-        server_tab.rowconfigure(3, weight=1)  # logs area
+        # Allocate ~15% to services (row=1) and ~85% to logs (row=3) using relative weights (3:17)
+        server_tab.rowconfigure(1, weight=1)   # services tree (~15%)
+        server_tab.rowconfigure(3, weight=19)  # logs area (~85%)
 
-        server_toolbar = ttk.Frame(server_tab)
-        server_toolbar.grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
-        ttk.Label(server_toolbar, text="Service:").pack(side=tk.LEFT)
-        self.service_name_var = tk.StringVar()
-        self.service_entry = ttk.Entry(server_toolbar, textvariable=self.service_name_var, width=30)
-        self.service_entry.pack(side=tk.LEFT, padx=(6, 6))
-        # Update Add button state as the user types and allow Enter key to add
+        # Top actions toolbar (above services list): Start, Stop, Status (with icon), separator, Add Service
+        top_actions = ttk.Frame(server_tab)
+        top_actions.grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
+        # Load start/stop/status icons
         try:
-            self.service_name_var.trace_add('write', lambda *args: self._update_service_actions_state())
+            self._icon_start = tk.PhotoImage(file=resource_path('server_manager_icons', 'start.png'))
         except Exception:
-            # Fallback for very old Tk versions
-            try:
-                self.service_name_var.trace('w', lambda *args: self._update_service_actions_state())
-            except Exception:
-                pass
-        self.service_entry.bind('<Return>', lambda e: self._add_service())
-        self.add_service_btn = ttk.Button(server_toolbar, text="Add", command=self._add_service, state='disabled')
-        self.add_service_btn.pack(side=tk.LEFT)
-        self.remove_service_btn = ttk.Button(server_toolbar, text="Remove", command=self._remove_selected_service, state='disabled')
+            self._icon_start = None
+        try:
+            self._icon_stop = tk.PhotoImage(file=resource_path('server_manager_icons', 'stop.png'))
+        except Exception:
+            self._icon_stop = None
+        try:
+            self._icon_status = tk.PhotoImage(file=resource_path('server_manager_icons', 'status.png'))
+        except Exception:
+            self._icon_status = None
+        # Load add/remove service icons
+        try:
+            self._icon_add_service = tk.PhotoImage(file=resource_path('server_manager_icons', 'add_service.png'))
+        except Exception:
+            self._icon_add_service = None
+        try:
+            self._icon_remove_service = tk.PhotoImage(file=resource_path('server_manager_icons', 'remove_service.png'))
+        except Exception:
+            self._icon_remove_service = None
+        self.svc_start_btn = ttk.Button(
+            top_actions,
+            text='Start',
+            image=self._icon_start,
+            compound='left',
+            command=lambda: self._svc_action('start'),
+            state='disabled'
+        )
+        self.svc_start_btn.pack(side=tk.LEFT, padx=(0, 6))
+        self.svc_stop_btn = ttk.Button(
+            top_actions,
+            text='Stop',
+            image=self._icon_stop,
+            compound='left',
+            command=lambda: self._svc_action('stop'),
+            state='disabled'
+        )
+        self.svc_stop_btn.pack(side=tk.LEFT, padx=(0, 6))
+        self.svc_status_btn = ttk.Button(
+            top_actions,
+            text='Status',
+            image=self._icon_status,
+            compound='left',
+            command=lambda: self._svc_action('status'),
+            state='disabled'
+        )
+        self.svc_status_btn.pack(side=tk.LEFT, padx=(0, 6))
+        # Separator then "Add Service" button
+        sep = ttk.Separator(top_actions, orient='vertical')
+        sep.pack(side=tk.LEFT, fill='y', padx=8)
+        self.svc_add_btn = ttk.Button(
+            top_actions,
+            text='Add Service',
+            image=self._icon_add_service,
+            compound='left',
+            command=self._on_add_service_popup,
+            state='disabled'
+        )
+        self.svc_add_btn.pack(side=tk.LEFT)
+        # Button to remove selected service (next to Add Service)
+        self.remove_service_btn = ttk.Button(
+            top_actions,
+            text='Remove Service',
+            image=self._icon_remove_service,
+            compound='left',
+            command=self._remove_selected_service,
+            state='disabled'
+        )
         self.remove_service_btn.pack(side=tk.LEFT, padx=(6, 0))
 
-        # Services list (Treeview with Service and Status columns)
+    # Services list (Treeview with Service and Status columns)
         svc_frame = ttk.Frame(server_tab)
         svc_frame.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
         svc_frame.columnconfigure(0, weight=1)
@@ -347,7 +454,7 @@ class ServerManagerGUI:
             if service:
                 self._fetch_service_logs_async(service)
         self.services_tree.bind('<Double-1>', _on_services_double_click)
-        # Context menu for services (Start/Stop/Status)
+    # Context menu for services (Start/Stop/Status)
         self._services_menu = tk.Menu(server_tab, tearoff=0)
         self._services_menu.add_command(label='Start', command=lambda: self._svc_action('start'))
         self._services_menu.add_command(label='Stop', command=lambda: self._svc_action('stop'))
@@ -372,22 +479,33 @@ class ServerManagerGUI:
                     self._services_menu.grab_release()
         self.services_tree.bind('<Button-3>', _on_services_right_click)
 
-        # Action buttons
-        actions = ttk.Frame(server_tab)
-        actions.grid(row=2, column=0, sticky=tk.W, pady=(8, 0))
-        self.svc_start_btn = ttk.Button(actions, text='Start', command=lambda: self._svc_action('start'), state='disabled')
-        self.svc_stop_btn = ttk.Button(actions, text='Stop', command=lambda: self._svc_action('stop'), state='disabled')
-        self.svc_status_btn = ttk.Button(actions, text='Status', command=lambda: self._svc_action('status'), state='disabled')
-        for b in (self.svc_start_btn, self.svc_stop_btn, self.svc_status_btn):
-            b.pack(side=tk.LEFT, padx=(0, 6))
+        # Removed the entry/add/remove toolbar above logs per request
 
         # Logs area below services
         logs_frame = ttk.Frame(server_tab)
         logs_frame.grid(row=3, column=0, sticky=(tk.N, tk.S, tk.E, tk.W), pady=(8, 0))
         logs_frame.columnconfigure(0, weight=1)
         logs_frame.rowconfigure(1, weight=1)
-        ttk.Label(logs_frame, text="Logs").grid(row=0, column=0, sticky=tk.W, pady=(0, 4))
+        # Header with title and Find Next controls
+        logs_header = ttk.Frame(logs_frame)
+        logs_header.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 4))
+        ttk.Label(logs_header, text="Logs").pack(side=tk.LEFT)
+        # Find bar on the right
+        self._logs_find_var = tk.StringVar()
+        find_bar = ttk.Frame(logs_header)
+        find_bar.pack(side=tk.RIGHT)
+        ttk.Label(find_bar, text="Find:").pack(side=tk.LEFT)
+        self._logs_find_entry = ttk.Entry(find_bar, textvariable=self._logs_find_var, width=28)
+        self._logs_find_entry.pack(side=tk.LEFT, padx=(4, 4))
+        self._logs_find_entry.bind('<Return>', lambda e: self._find_next_in_logs())
+        ttk.Button(find_bar, text="Find Next", command=self._find_next_in_logs).pack(side=tk.LEFT)
+        # Text widget and scrollbar
         self.svc_logs_text = tk.Text(logs_frame, height=10, wrap='word', state='disabled')
+        # highlight tag for find results
+        try:
+            self.svc_logs_text.tag_config('find_highlight', background='yellow', foreground='black')
+        except Exception:
+            pass
         logs_scroll = ttk.Scrollbar(logs_frame, orient='vertical', command=self.svc_logs_text.yview)
         self.svc_logs_text.configure(yscrollcommand=logs_scroll.set)
         self.svc_logs_text.grid(row=1, column=0, sticky='nsew')
@@ -400,7 +518,7 @@ class ServerManagerGUI:
         paned.add(left_panel, weight=1)
         paned.add(right_panel, weight=2)
 
-    # Status bar at bottom
+        # Status bar at bottom
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
@@ -411,6 +529,8 @@ class ServerManagerGUI:
             self.root.after(150, self._set_initial_sash)
         except Exception:
             pass
+
+    # _load_icon_16 removed: icons are now loaded directly via tk.PhotoImage(file=resource_path(...))
 
     def _set_initial_sash(self):
         try:
@@ -443,16 +563,25 @@ class ServerManagerGUI:
 
     def set_controls_enabled(self, enabled: bool):
         """Enable or disable interactive controls."""
-        state = 'normal' if enabled else 'disabled'
-        # top menu remains active; only listbox gets toggled here
-        self.server_listbox.config(state=state)
+        # top menu remains active; only server list selection is toggled here
+        try:
+            self.server_tree.configure(selectmode='browse' if enabled else 'none')
+        except Exception:
+            pass
         # Upload button follows connection state elsewhere; don't toggle here
 
     def refresh_server_list(self):
         """Refresh the server list display."""
-        self.server_listbox.delete(0, tk.END)
+        try:
+            for iid in self.server_tree.get_children(''):
+                self.server_tree.delete(iid)
+        except Exception:
+            pass
         for server_name in self.credential_manager.list_servers():
-            self.server_listbox.insert(tk.END, server_name)
+            try:
+                self.server_tree.insert('', 'end', text=server_name, image=self._server_icon)
+            except Exception:
+                self.server_tree.insert('', 'end', text=server_name)
     
     def add_server_dialog(self):
         """Show dialog to add a new server."""
@@ -465,12 +594,10 @@ class ServerManagerGUI:
     
     def edit_server_dialog(self):
         """Show dialog to edit selected server."""
-        selection = self.server_listbox.curselection()
-        if not selection:
+        server_name = self._get_selected_server_name()
+        if not server_name:
             messagebox.showwarning("Warning", "Please select a server to edit")
             return
-        
-        server_name = self.server_listbox.get(selection[0])
         server_data = self.credential_manager.get_server(server_name)
         
         dialog = ServerDialog(self.root, "Edit Server", server_data, server_name)
@@ -488,12 +615,10 @@ class ServerManagerGUI:
     
     def delete_server(self):
         """Delete selected server."""
-        selection = self.server_listbox.curselection()
-        if not selection:
+        server_name = self._get_selected_server_name()
+        if not server_name:
             messagebox.showwarning("Warning", "Please select a server to delete")
             return
-        
-        server_name = self.server_listbox.get(selection[0])
         if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete server '{server_name}'?"):
             self.credential_manager.delete_server(server_name)
             self.refresh_server_list()
@@ -501,14 +626,13 @@ class ServerManagerGUI:
     
     def on_server_double_click(self, event):
         # Determine clicked index reliably
-        idx = event.widget.nearest(event.y)
-        if idx is None or idx < 0:
+        # Identify the item under the cursor and (re)connect
+        row_id = self.server_tree.identify_row(event.y)
+        if not row_id:
             return
-        self.server_listbox.selection_clear(0, tk.END)
-        self.server_listbox.selection_set(idx)
-        self.server_listbox.activate(idx)
-
-        server_name = self.server_listbox.get(idx)
+        self.server_tree.selection_set(row_id)
+        self.server_tree.focus(row_id)
+        server_name = self.server_tree.item(row_id).get('text')
         if not self.ssh_connection.is_connected() or self.connected_server_name != server_name:
             self.connect_to_server_by_name(server_name)
         else:
@@ -517,12 +641,20 @@ class ServerManagerGUI:
 
     def connect_to_server(self):
         """Connect to the currently selected server from the listbox."""
-        selection = self.server_listbox.curselection()
-        if not selection:
+        server_name = self._get_selected_server_name()
+        if not server_name:
             messagebox.showwarning("Warning", "Please select a server to connect to")
             return
-        server_name = self.server_listbox.get(selection[0])
         self.connect_to_server_by_name(server_name)
+
+    def _get_selected_server_name(self) -> Optional[str]:
+        try:
+            sel = self.server_tree.selection()
+            if not sel:
+                return None
+            return self.server_tree.item(sel[0]).get('text') or None
+        except Exception:
+            return None
 
     def connect_to_server_by_name(self, server_name: str):
         """Connect to the server by its name."""
@@ -618,11 +750,11 @@ class ServerManagerGUI:
     def _set_services_ui_enabled(self, enabled: bool):
         state = 'normal' if enabled else 'disabled'
         # Buttons and entry
-        for w in (self.add_service_btn, self.remove_service_btn, self.svc_start_btn,
-                   self.svc_stop_btn, self.svc_status_btn,
-                   self.service_entry):
+        for w in (self.remove_service_btn, self.svc_start_btn,
+                   self.svc_stop_btn, self.svc_status_btn, getattr(self, 'svc_add_btn', None)):
             try:
-                w.config(state=state)
+                if w is not None:
+                    w.config(state=state)
             except Exception:
                 pass
         # Treeview selection mode behaves as enable/disable
@@ -639,32 +771,67 @@ class ServerManagerGUI:
         is_sel = bool(sel)
         for b in (self.remove_service_btn, self.svc_start_btn, self.svc_stop_btn, self.svc_status_btn):
             b.config(state='normal' if (enabled and is_sel) else 'disabled')
-        # Add button enabled if entry has text and connected
-        name = (self.service_name_var.get() or '').strip()
-        self.add_service_btn.config(state='normal' if (enabled and name) else 'disabled')
-
-    def _add_service(self):
-        name = (self.service_name_var.get() or '').strip()
-        if not name:
-            return
-        # insert if not exist
-        # existing services from tree
-        existing = []
+        # Add Service popup button enabled if connected
         try:
-            for iid in self.services_tree.get_children():
-                vals = self.services_tree.item(iid).get('values') or []
-                if vals:
-                    existing.append(str(vals[0]))
+            self.svc_add_btn.config(state='normal' if enabled else 'disabled')
         except Exception:
             pass
-        if name in existing:
-            messagebox.showinfo('Service Exists', f"'{name}' is already in favorites.")
+
+    # _add_service via entry removed; adding is done through popup now
+
+    def _on_add_service_popup(self):
+        if not self.ssh_connection.is_connected():
+            messagebox.showwarning('Not Connected', 'Connect to a server first.')
             return
-        self.services_tree.insert('', 'end', values=(name, ''))
-        self.service_name_var.set('')
-        self._persist_services()
-        self._refresh_services_status_async()
-        self._update_service_actions_state()
+        dlg = tk.Toplevel(self.root)
+        dlg.title('Add Service')
+        dlg.transient(self.root)
+        dlg.grab_set()
+        frm = ttk.Frame(dlg, padding=10)
+        frm.grid(row=0, column=0, sticky='nsew')
+        dlg.columnconfigure(0, weight=1)
+        dlg.rowconfigure(0, weight=1)
+
+        ttk.Label(frm, text='Service name:').grid(row=0, column=0, sticky='w')
+        name_var = tk.StringVar()
+        entry = ttk.Entry(frm, textvariable=name_var, width=40)
+        entry.grid(row=1, column=0, sticky='ew', pady=(4, 8))
+        entry.focus_set()
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=2, column=0, sticky='e')
+
+        def _save():
+            val = (name_var.get() or '').strip()
+            if not val:
+                messagebox.showwarning('Validation', 'Please enter a service name.')
+                return
+            # Add to tree if not exists
+            existing = []
+            try:
+                for iid in self.services_tree.get_children():
+                    vals = self.services_tree.item(iid).get('values') or []
+                    if vals:
+                        existing.append(str(vals[0]))
+            except Exception:
+                pass
+            if val in existing:
+                messagebox.showinfo('Service Exists', f"'{val}' is already in favorites.")
+                return
+            self.services_tree.insert('', 'end', values=(val, ''))
+            self._persist_services()
+            self._refresh_services_status_async()
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+
+        ttk.Button(btns, text='Save', command=_save).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btns, text='Cancel', command=dlg.destroy).pack(side=tk.LEFT)
+        try:
+            center_window(dlg, self.root)
+        except Exception:
+            pass
 
     def _remove_selected_service(self):
         sel = self.services_tree.selection()
@@ -844,6 +1011,51 @@ class ServerManagerGUI:
                 pass
         threading.Thread(target=worker, daemon=True).start()
 
+    # ----- Logs find helpers -----
+    def _find_next_in_logs(self):
+        """Find next occurrence of the search text in the logs text area, highlighting it and scrolling into view."""
+        try:
+            query = (self._logs_find_var.get() or '').strip()
+        except Exception:
+            query = ''
+        if not query:
+            return
+        try:
+            # Enable temporarily to manipulate selection and tags
+            prev_state = str(self.svc_logs_text.cget('state'))
+            self.svc_logs_text.config(state='normal')
+            # Remove previous highlight
+            try:
+                self.svc_logs_text.tag_remove('find_highlight', '1.0', 'end')
+            except Exception:
+                pass
+            # Start from current insert; if at end or nothing, start from '1.0'
+            start_index = self.svc_logs_text.index('insert')
+            pos = self.svc_logs_text.search(query, start_index, nocase=True, stopindex='end')
+            if not pos:
+                # wrap around to beginning
+                pos = self.svc_logs_text.search(query, '1.0', nocase=True, stopindex='end')
+            if pos:
+                end_pos = f"{pos}+{len(query)}c"
+                self.svc_logs_text.tag_add('find_highlight', pos, end_pos)
+                # Move insert/cursor to end of match for subsequent searches
+                try:
+                    self.svc_logs_text.mark_set('insert', end_pos)
+                except Exception:
+                    pass
+                # Scroll into view
+                try:
+                    self.svc_logs_text.see(pos)
+                except Exception:
+                    pass
+            # Restore read-only state
+            self.svc_logs_text.config(state=prev_state)
+        except Exception:
+            try:
+                self.svc_logs_text.config(state='disabled')
+            except Exception:
+                pass
+
 class RemoteFileBrowserFrame(ttk.Frame):
     """Embeddable SFTP browser frame for the main window right pane."""
 
@@ -922,6 +1134,11 @@ class RemoteFileBrowserFrame(ttk.Frame):
         self.search_var = tk.StringVar()
         self.search_entry = ttk.Entry(editor_toolbar, textvariable=self.search_var, state='disabled')
         self.search_entry.grid(row=0, column=3, sticky=(tk.W, tk.E))
+        # Press Enter in the search box to trigger Find Next
+        try:
+            self.search_entry.bind('<Return>', lambda e: self.find_next())
+        except Exception:
+            pass
         self.find_next_button = ttk.Button(editor_toolbar, text="Find Next", command=self.find_next, state='disabled')
         self.find_next_button.grid(row=0, column=4, padx=(6, 0), sticky=tk.W)
 
