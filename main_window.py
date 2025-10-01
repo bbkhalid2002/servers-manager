@@ -10,6 +10,7 @@ from ssh_connection import SSHConnection
 from file_browser import RemoteFileBrowserFrame
 from dialogs import ServerDialog
 from json_viewer import JSONViewerWindow
+from text_diff import TextDiffWindow
 
 
 class ServerManagerGUI:
@@ -17,7 +18,7 @@ class ServerManagerGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("SSH Server Manager")
+        self.root.title("Backend Support Manager")
         # Geometry is set by the launcher
 
         self.credential_manager = CredentialManager()
@@ -38,9 +39,10 @@ class ServerManagerGUI:
         servers_menu.add_command(label="Connect", command=self.connect_to_server)
         servers_menu.add_command(label="Disconnect", command=self.disconnect_from_server)
         menubar.add_cascade(label="Servers", menu=servers_menu)
-        # Tools menu with JSON Viewer
+        # Tools menu with JSON Viewer and Text Diff
         tools_menu = tk.Menu(menubar, tearoff=0)
         tools_menu.add_command(label="JSON Viewer", command=self.open_json_viewer)
+        tools_menu.add_command(label="Text Diff", command=self.open_text_diff)
         menubar.add_cascade(label="Tools", menu=tools_menu)
 
         # Help menu with About
@@ -784,3 +786,9 @@ class ServerManagerGUI:
             JSONViewerWindow(self.root)
         except Exception as e:
             messagebox.showerror("JSON Viewer", f"Failed to open JSON Viewer: {e}")
+
+    def open_text_diff(self):
+        try:
+            TextDiffWindow(self.root)
+        except Exception as e:
+            messagebox.showerror("Text Diff", f"Failed to open Text Diff: {e}")
