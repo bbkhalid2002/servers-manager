@@ -9,6 +9,7 @@ from credentials import CredentialManager
 from ssh_connection import SSHConnection
 from file_browser import RemoteFileBrowserFrame
 from dialogs import ServerDialog
+from json_viewer import JSONViewerWindow
 
 
 class ServerManagerGUI:
@@ -37,6 +38,11 @@ class ServerManagerGUI:
         servers_menu.add_command(label="Connect", command=self.connect_to_server)
         servers_menu.add_command(label="Disconnect", command=self.disconnect_from_server)
         menubar.add_cascade(label="Servers", menu=servers_menu)
+        # Tools menu with JSON Viewer
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        tools_menu.add_command(label="JSON Viewer", command=self.open_json_viewer)
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+
         # Help menu with About
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="About", command=self.show_about)
@@ -760,7 +766,7 @@ class ServerManagerGUI:
             frm.grid(row=0, column=0, sticky='nsew')
             dlg.columnconfigure(0, weight=1)
             dlg.rowconfigure(0, weight=1)
-            msg = ("Developed by AI in 2025 by great mind for a great team!")
+            msg = ("Developed in 2025 for a great team!")
             ttk.Label(frm, text=msg, wraplength=420, justify='center').grid(row=0, column=0, pady=(0, 10))
             ttk.Button(frm, text="OK", command=dlg.destroy).grid(row=1, column=0, sticky='e')
             try:
@@ -769,6 +775,12 @@ class ServerManagerGUI:
                 pass
         except Exception:
             try:
-                messagebox.showinfo("About", "Developed by AI in 2025 by great mind for a great team!")
+                messagebox.showinfo("About", "Developed in 2025 for a great team!")
             except Exception:
                 pass
+
+    def open_json_viewer(self):
+        try:
+            JSONViewerWindow(self.root)
+        except Exception as e:
+            messagebox.showerror("JSON Viewer", f"Failed to open JSON Viewer: {e}")
