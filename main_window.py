@@ -4,7 +4,7 @@ import os
 import threading
 from typing import Optional
 
-from utils import center_window, resource_path
+from utils import center_window, resource_path, bring_window_to_front, load_icon
 from credentials import CredentialManager
 from ssh_connection import SSHConnection
 from file_browser import RemoteFileBrowserFrame
@@ -79,9 +79,8 @@ class ServerManagerGUI:
         # Load server icon (once)
         self._server_icon = None
         try:
-            icon_path = resource_path('server_manager_icons', 'server.png')
-            if os.path.exists(icon_path):
-                self._server_icon = tk.PhotoImage(file=icon_path)
+            # 16px fits the configured rowheight
+            self._server_icon = load_icon(16, 'server_manager_icons', 'server.png')
         except Exception:
             self._server_icon = None
 
@@ -130,11 +129,11 @@ class ServerManagerGUI:
         file_actions_right.pack(side=tk.RIGHT)
         # Load toolbar icons
         try:
-            self._icon_upload = tk.PhotoImage(file=resource_path('server_manager_icons', 'upload.png'))
+            self._icon_upload = load_icon(18, 'server_manager_icons', 'upload.png')
         except Exception:
             self._icon_upload = None
         try:
-            self._icon_download = tk.PhotoImage(file=resource_path('server_manager_icons', 'download.png'))
+            self._icon_download = load_icon(18, 'server_manager_icons', 'download.png')
         except Exception:
             self._icon_download = None
         self.upload_button = ttk.Button(
@@ -172,23 +171,23 @@ class ServerManagerGUI:
         actions_right.pack(side=tk.RIGHT)
         # Load action icons
         try:
-            self._icon_start = tk.PhotoImage(file=resource_path('server_manager_icons', 'start.png'))
+            self._icon_start = load_icon(18, 'server_manager_icons', 'start.png')
         except Exception:
             self._icon_start = None
         try:
-            self._icon_stop = tk.PhotoImage(file=resource_path('server_manager_icons', 'stop.png'))
+            self._icon_stop = load_icon(18, 'server_manager_icons', 'stop.png')
         except Exception:
             self._icon_stop = None
         try:
-            self._icon_status = tk.PhotoImage(file=resource_path('server_manager_icons', 'status.png'))
+            self._icon_status = load_icon(18, 'server_manager_icons', 'status.png')
         except Exception:
             self._icon_status = None
         try:
-            self._icon_add_service = tk.PhotoImage(file=resource_path('server_manager_icons', 'add_service.png'))
+            self._icon_add_service = load_icon(18, 'server_manager_icons', 'add_service.png')
         except Exception:
             self._icon_add_service = None
         try:
-            self._icon_remove_service = tk.PhotoImage(file=resource_path('server_manager_icons', 'remove_service.png'))
+            self._icon_remove_service = load_icon(18, 'server_manager_icons', 'remove_service.png')
         except Exception:
             self._icon_remove_service = None
 
@@ -304,6 +303,11 @@ class ServerManagerGUI:
 
         try:
             self.root.after(150, self._set_initial_sash)
+        except Exception:
+            pass
+        # Make sure the main window is frontmost when initialized
+        try:
+            bring_window_to_front(self.root)
         except Exception:
             pass
 
@@ -557,6 +561,10 @@ class ServerManagerGUI:
             center_window(dlg, self.root)
         except Exception:
             pass
+        try:
+            bring_window_to_front(dlg)
+        except Exception:
+            pass
 
     def _remove_selected_service(self):
         sel = self.services_tree.selection()
@@ -644,6 +652,10 @@ class ServerManagerGUI:
         ttk.Button(frm, text='Close', command=dlg.destroy).grid(row=1, column=0, pady=(8,0), sticky='e')
         try:
             center_window(dlg, self.root)
+        except Exception:
+            pass
+        try:
+            bring_window_to_front(dlg)
         except Exception:
             pass
 
@@ -773,6 +785,10 @@ class ServerManagerGUI:
             ttk.Button(frm, text="OK", command=dlg.destroy).grid(row=1, column=0, sticky='e')
             try:
                 center_window(dlg, self.root)
+            except Exception:
+                pass
+            try:
+                bring_window_to_front(dlg)
             except Exception:
                 pass
         except Exception:

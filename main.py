@@ -7,6 +7,7 @@ A cross-platform GUI application for managing SSH server connections.
 import sys
 import tkinter as tk
 from tkinter import messagebox
+from utils import bring_window_to_front
 
 # Paramiko dependency is required; it's imported in ssh_connection module.
 from main_window import ServerManagerGUI
@@ -14,18 +15,23 @@ from main_window import ServerManagerGUI
 def main():
     """Main application entry point."""
     root = tk.Tk()
-    # Center main window at 50% of screen size
+    # Center main window at 80% of screen size
     try:
         root.update_idletasks()
         sw = root.winfo_screenwidth()
         sh = root.winfo_screenheight()
-        w = max(700, int(sw * 0.5))
-        h = max(500, int(sh * 0.5))
+        w = int(sw * 0.8)
+        h = int(sh * 0.8)
         x = (sw - w) // 2
         y = (sh - h) // 2
         root.geometry(f"{w}x{h}+{x}+{y}")
     except Exception:
-        root.geometry("900x600")
+        root.geometry("1280x800")
+    # Ensure the main window is brought to the front (esp. on macOS)
+    try:
+        bring_window_to_front(root)
+    except Exception:
+        pass
     
     def on_closing():
         if messagebox.askokcancel("Quit", "Do you want to quit?"):
@@ -35,6 +41,10 @@ def main():
     
     try:
         ServerManagerGUI(root)
+        try:
+            bring_window_to_front(root)
+        except Exception:
+            pass
         root.mainloop()
     except KeyboardInterrupt:
         print("\nApplication interrupted by user.")

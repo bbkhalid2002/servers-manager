@@ -65,3 +65,87 @@ def resource_path(*relative_parts: str) -> str:
     except Exception:
         base_path = os.path.abspath(os.path.dirname(__file__))
     return os.path.join(base_path, *relative_parts)
+
+
+def bring_window_to_front(win: tk.Tk | tk.Toplevel | tk.Misc):
+    """Best-effort: bring a Tk window to the foreground and focus it.
+
+    This toggles the always-on-top attribute briefly and focuses the window.
+    On macOS, it also asks the app to become active, which prevents new
+    windows from appearing behind other apps.
+    """
+    try:
+        try:
+            win.update_idletasks()
+        except Exception:
+            pass
+        try:
+            win.lift()
+        except Exception:
+            pass
+        try:
+            # Briefly set always-on-top to raise above others, then turn off
+            win.attributes('-topmost', True)
+            # Use a short delay to allow the window manager to process
+            win.after(200, lambda: _clear_topmost_safely(win))
+        except Exception:
+            pass
+        try:
+            win.focus_force()
+        except Exception:
+            # Fall back to focus_set
+            try:
+                win.focus_set()
+            except Exception:
+                pass
+        # macOS: request app activation so windows don't open behind
+        if sys.platform == 'darwin':
+            try:
+                win.tk.call('::tk::mac::ReopenApplication')
+            except Exception:
+                pass
+    except Exception:
+        # Best effort; ignore if the platform/wm doesn't support this
+        pass
+
+
+def _clear_topmost_safely(win: tk.Misc):
+    try:
+        win.attributes('-topmost', False)
+    except Exception:
+        pass
+
+
+def load_icon(max_size: int, *relative_parts: str) -> Optional[tk.PhotoImage]:
+    """Load a PNG icon via Tk PhotoImage and scale it down if larger than max_size.
+
+    Args:
+        max_size: Maximum width/height in pixels for the returned image.
+        *relative_parts: Path parts relative to the application resources.
+
+    Returns:
+        A PhotoImage instance or None if the file doesn't exist or fails to load.
+    """
+    try:
+        path = resource_path(*relative_parts)
+        if not os.path.exists(path):
+            return None
+        img = tk.PhotoImage(file=path)
+        try:
+            w = int(img.width())
+            h = int(img.height())
+        except Exception:
+            return img
+        # Only subsample (integer downscale) if larger than desired size
+        if max(w, h) > max_size:
+            # Compute integer factor to bring max dimension <= max_size
+            # Ensure factor >= 1
+            factor = max(1, int((max(w, h) + max_size - 1) // max_size))
+            try:
+                img = img.subsample(factor, factor)
+            except Exception:
+                # If subsample fails, return original
+                return img
+        return img
+    except Exception:
+        return None

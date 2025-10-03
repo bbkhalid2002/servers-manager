@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+from utils import bring_window_to_front
 import difflib
 
 class TextDiffWindow:
@@ -89,6 +90,11 @@ class TextDiffWindow:
             self.top.geometry(f"{w}x{h}+{x}+{y}")
         except Exception:
             self.top.geometry("1200x700")
+        # Ensure on top/front, especially on macOS
+        try:
+            bring_window_to_front(self.top)
+        except Exception:
+            pass
 
     def _schedule_diff(self, event=None):
         if self._after_id:

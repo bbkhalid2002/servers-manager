@@ -2,7 +2,7 @@ import stat
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from utils import center_window
+from utils import center_window, bring_window_to_front
 
 
 class ServerDialog:
@@ -16,11 +16,19 @@ class ServerDialog:
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
         self.dialog.grab_set()
+        try:
+            bring_window_to_front(self.dialog)
+        except Exception:
+            pass
 
         self.setup_dialog_ui(server_data, server_name)
         # Center after layout relative to parent
         try:
             center_window(self.dialog, parent)
+        except Exception:
+            pass
+        try:
+            bring_window_to_front(self.dialog)
         except Exception:
             pass
 
@@ -99,6 +107,10 @@ class PermissionsDialog:
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
         self.dialog.grab_set()
+        try:
+            bring_window_to_front(self.dialog)
+        except Exception:
+            pass
 
         frm = ttk.Frame(self.dialog, padding=10)
         frm.grid(row=0, column=0, sticky='nsew')
@@ -131,6 +143,10 @@ class PermissionsDialog:
         ttk.Button(btns, text='Cancel', command=self.cancel).pack(side=tk.LEFT, padx=5)
         try:
             center_window(self.dialog, parent)
+        except Exception:
+            pass
+        try:
+            bring_window_to_front(self.dialog)
         except Exception:
             pass
         self.dialog.wait_window()
@@ -172,6 +188,10 @@ class OwnerGroupDialog:
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
         self.dialog.grab_set()
+        try:
+            bring_window_to_front(self.dialog)
+        except Exception:
+            pass
 
         frm = ttk.Frame(self.dialog, padding=10)
         frm.grid(row=0, column=0, sticky='nsew')
@@ -191,6 +211,10 @@ class OwnerGroupDialog:
         ttk.Button(btns, text='Cancel', command=self.cancel).pack(side=tk.LEFT, padx=5)
         try:
             center_window(self.dialog, parent)
+        except Exception:
+            pass
+        try:
+            bring_window_to_front(self.dialog)
         except Exception:
             pass
         self.dialog.wait_window()

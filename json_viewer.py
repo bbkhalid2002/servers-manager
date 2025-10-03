@@ -2,6 +2,7 @@ import json
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Any, Optional, Tuple
+from utils import bring_window_to_front
 
 
 class JSONViewerWindow:
@@ -110,6 +111,11 @@ class JSONViewerWindow:
         except Exception:
             # Fallback if screen metrics are unavailable
             self.top.geometry("800x500")
+        # Ensure on top/front, especially on macOS
+        try:
+            bring_window_to_front(self.top)
+        except Exception:
+            pass
 
     # ---------------- Parsing & Cleaning -----------------
     def _schedule_parse(self, event=None):
